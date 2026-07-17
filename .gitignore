@@ -1,0 +1,26 @@
+# Variables de entorno / credenciales (NUNCA subir esto)
+.env
+
+# Entornos virtuales
+venv/
+env/
+.venv/
+
+# Cache y archivos compilados de Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+
+# Archivos de log si generas alguno
+*.log
