@@ -124,6 +124,8 @@ def on_open(ws):
     print("[WS ABIERTO] Suscribiendo tickers...")
     for ticker in id_instrumento_por_ticker.keys():
         ws.send(json.dumps({"type": "subscribe", "symbol": ticker}))
+        # Prueba temporal
+        # ws.send(json.dumps({"type": "subscribe", "symbol": "BINANCE:BTCUSDT"}))
         time.sleep(0.2)  # pequeña pausa para no saturar la suscripción
 
 

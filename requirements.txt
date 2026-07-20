@@ -8,4 +8,5 @@ websocket-client==1.9.0
 jupyter==1.1.1
 notebook==7.6.0
 
-pip install -r requirements.txt
+#ejecutar lo siguiente en consola
+#pip install -r requirements.txt
