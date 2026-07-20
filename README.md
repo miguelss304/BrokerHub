@@ -19,6 +19,7 @@ BrokerHub/
 ├── cliente_finnhub.py            # funciones REST a Finnhub + histórico vía yfinance
 │
 ├── carga_inicial.py              # puebla Emisor, Instrumento, Categoría, Cotización, Listado
+├── actualizar_historico.py       # trae solo los días nuevos que falten en Cotizacion_Historica
 ├── generador_faker.py            # genera Cliente y Cuenta_Inversion sintéticos
 ├── simulador_ordenes.py          # genera Orden, Transaccion_Ejecutada, Posicion (histórico simulado)
 ├── streaming.py                  # WebSocket en vivo -> Precio_Tiempo_Real
@@ -38,7 +39,7 @@ pip install -r requirements.txt
 
 ## 2. Configurar credenciales
 
-Crea un archivo `.env` y completa con tus valores reales:
+Copia `.env.example` como `.env` y completa con tus valores reales:
 
 ```
 MYSQLHOST=tokaido.proxy.rlwy.net
@@ -68,6 +69,10 @@ duplicar datos (usan "buscar o crear" o `INSERT IGNORE` / `ON DUPLICATE KEY`):
 ```bash
 # 1. Datos reales de mercado: Emisor, Instrumento, Categoría, Cotización, Listado
 python carga_inicial.py
+
+# 1.5. (Correr periódicamente, ej. una vez al día) Trae solo los días nuevos
+#      que falten en Cotizacion_Historica, sin repetir todo el histórico.
+python actualizar_historico.py
 
 # 2. Clientes y cuentas sintéticas
 python generador_faker.py
@@ -137,6 +142,31 @@ vez" a una aplicación que reacciona en vivo:
 
 `streaming.py` y `ejecutor_ordenes.py` están pensados para correr **en paralelo**
 de forma indefinida (streaming captura precios, el ejecutor reacciona a ellos).
+
+## Consistencia del "precio actual" (horario de mercado)
+
+Tanto `main.py` (API) como `ejecutor_ordenes.py` usan la misma lógica para
+decidir qué es el "precio actual" de un instrumento:
+
+- Si el mercado está abierto (lunes-viernes, 9:30 AM - 4:00 PM hora de
+  Nueva York) **y** hay datos en `Precio_Tiempo_Real`, se usa el último trade.
+- Si el mercado está cerrado, o aún no ha llegado ningún dato en vivo, se usa
+  el último `precio_cierre` de `Cotizacion_Historica`.
+
+Esto evita que se use un precio "viejo" del streaming (por ejemplo, el último
+trade antes de que cerrara el mercado) como si fuera el precio actual. Por la
+misma razón, `Cotizacion_Historica` debe mantenerse actualizada corriendo
+`actualizar_historico.py` periódicamente -- si no, el respaldo fuera de
+horario también queda desactualizado.
+
+## Notas sobre streaming.py (trades duplicados)
+
+`Precio_Tiempo_Real` tiene como clave primaria `(id_instrumento, fecha_hora)`,
+y `fecha_hora` solo guarda precisión de segundos. Si llegan dos trades del
+mismo instrumento en el mismo segundo, se usa `INSERT IGNORE` para descartar
+el duplicado sin tumbar el lote completo. El hilo escritor además está
+envuelto en un manejo de errores general para que nunca muera en silencio
+(si muriera, se dejarían de guardar trades sin ningún aviso visible).
 
 ## API (FastAPI)
 
@@ -234,6 +264,9 @@ la nube por ahora.
   y `Listado_Mercado` (Instrumento_Financiero ↔ Mercado_Bolsa).
 - **Dimensión temporal**: `Cotizacion_Historica` (histórico diario) y
   `Precio_Tiempo_Real` (streaming en vivo).
+- **Zona horaria**: la detección de horario de mercado usa `zoneinfo` con
+  `America/New_York`. En Windows requiere el paquete `tzdata` (ya incluido
+  en `requirements.txt`) para tener la base de datos de zonas horarias.
 
 ## Notas técnicas sobre la conexión a Railway (plan gratuito)
 
