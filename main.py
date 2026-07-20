@@ -12,7 +12,9 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import mysql.connector
 
 from conexion_db import obtener_conexion
 
@@ -20,6 +22,16 @@ app = FastAPI(
     title="BrokerHub API",
     description="API para consultar y operar sobre la plataforma de corretaje BrokerHub.",
     version="1.0.0",
+)
+
+# Habilita que cualquier frontend (dashboard, app, etc.) pueda llamar esta API
+# desde el navegador. En producción se puede restringir allow_origins a
+# dominios específicos en vez de "*".
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -40,13 +52,19 @@ class NuevaOrden(BaseModel):
 # ------------------------------------------------------------------
 
 def consultar(query, params=None):
-    conexion = obtener_conexion()
-    cursor = conexion.cursor(dictionary=True)
-    cursor.execute(query, params or ())
-    resultado = cursor.fetchall()
-    cursor.close()
-    conexion.close()
-    return resultado
+    try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor(dictionary=True)
+        cursor.execute(query, params or ())
+        resultado = cursor.fetchall()
+        cursor.close()
+        conexion.close()
+        return resultado
+    except mysql.connector.Error as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Base de datos no disponible en este momento: {e}",
+        )
 
 
 # ------------------------------------------------------------------
@@ -56,6 +74,19 @@ def consultar(query, params=None):
 @app.get("/")
 def raiz():
     return {"mensaje": "BrokerHub API activa. Ve a /docs para probar los endpoints."}
+
+
+@app.get("/health")
+def health():
+    """Endpoint de monitoreo: confirma que la API responde y que la base
+    de datos está accesible en este momento."""
+    try:
+        conexion = obtener_conexion()
+        vivo = conexion.is_connected()
+        conexion.close()
+        return {"status": "ok", "database": "conectada" if vivo else "desconectada"}
+    except mysql.connector.Error as e:
+        return {"status": "error", "database": f"no disponible: {e}"}
 
 
 # ------------------------------------------------------------------
@@ -215,30 +246,68 @@ def colocar_orden(orden: NuevaOrden):
     if not cuenta:
         raise HTTPException(status_code=404, detail="Cuenta no encontrada o inactiva")
 
-    conexion = obtener_conexion()
-    cursor = conexion.cursor()
-    cursor.execute(
-        """INSERT INTO Orden (id_cuenta, id_instrumento, tipo_orden, cantidad,
-                               precio_limite, fecha_hora, estado)
-           VALUES (%s, %s, %s, %s, %s, %s, 'PENDIENTE')""",
-        (
-            orden.id_cuenta,
-            instrumento[0]["id_instrumento"],
-            orden.tipo_orden,
-            orden.cantidad,
-            orden.precio_limite,
-            datetime.now(),
-        ),
-    )
-    conexion.commit()
-    id_orden = cursor.lastrowid
-    cursor.close()
-    conexion.close()
+    try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor()
+        cursor.execute(
+            """INSERT INTO Orden (id_cuenta, id_instrumento, tipo_orden, cantidad,
+                                   precio_limite, fecha_hora, estado)
+               VALUES (%s, %s, %s, %s, %s, %s, 'PENDIENTE')""",
+            (
+                orden.id_cuenta,
+                instrumento[0]["id_instrumento"],
+                orden.tipo_orden,
+                orden.cantidad,
+                orden.precio_limite,
+                datetime.now(),
+            ),
+        )
+        conexion.commit()
+        id_orden = cursor.lastrowid
+        cursor.close()
+        conexion.close()
+    except mysql.connector.Error as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"No se pudo guardar la orden, base de datos no disponible: {e}",
+        )
 
     return {
         "mensaje": "Orden colocada, queda PENDIENTE hasta que el ejecutor la resuelva",
         "id_orden": id_orden,
     }
+
+
+@app.delete("/ordenes/{id_orden}")
+def cancelar_orden(id_orden: int):
+    """Cancela una orden, solo si todavía está en estado PENDIENTE
+    (una orden ya EJECUTADA no se puede cancelar)."""
+    resultado = consultar("SELECT estado FROM Orden WHERE id_orden = %s", (id_orden,))
+    if not resultado:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+
+    if resultado[0]["estado"] != "PENDIENTE":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Solo se pueden cancelar órdenes PENDIENTE (estado actual: {resultado[0]['estado']})",
+        )
+
+    try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor()
+        cursor.execute(
+            "UPDATE Orden SET estado = 'CANCELADA' WHERE id_orden = %s", (id_orden,)
+        )
+        conexion.commit()
+        cursor.close()
+        conexion.close()
+    except mysql.connector.Error as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"No se pudo cancelar la orden, base de datos no disponible: {e}",
+        )
+
+    return {"mensaje": f"Orden #{id_orden} cancelada correctamente"}
 
 
 @app.get("/ordenes/{id_orden}")
