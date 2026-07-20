@@ -38,7 +38,7 @@ pip install -r requirements.txt
 
 ## 2. Configurar credenciales
 
-Copia `.env.example` como `.env` y completa con tus valores reales:
+Crea un archivo `.env` y completa con tus valores reales:
 
 ```
 MYSQLHOST=tokaido.proxy.rlwy.net
