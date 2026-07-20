@@ -64,23 +64,45 @@ def escritor_periodico():
             trades_a_escribir = buffer_trades.copy()
             buffer_trades.clear()
 
-        for intento in range(1, 4):
+        try:
+            _escribir_lote(trades_a_escribir)
+        except Exception as e:
+            # Red de seguridad: pase lo que pase, el hilo NO debe morir,
+            # o se dejarían de guardar trades para siempre sin darse cuenta.
+            print(f"[ESCRITOR] Error inesperado, se descarta este lote y se sigue: {e}")
+
+
+def _escribir_lote(trades_a_escribir):
+    for intento in range(1, 4):
             try:
                 conexion = obtener_conexion()
                 cursor = conexion.cursor()
+                # INSERT IGNORE: si dos trades del mismo instrumento llegan en el
+                # mismo segundo, la PK (id_instrumento, fecha_hora) choca -- se
+                # descarta el duplicado en vez de tumbar todo el lote.
                 cursor.executemany(
-                    """INSERT INTO Precio_Tiempo_Real (id_instrumento, precio_actual, volumen_tick, fecha_hora)
+                    """INSERT IGNORE INTO Precio_Tiempo_Real (id_instrumento, precio_actual, volumen_tick, fecha_hora)
                        VALUES (%s, %s, %s, %s)""",
                     trades_a_escribir,
                 )
                 conexion.commit()
+                filas_insertadas = cursor.rowcount
                 cursor.close()
                 conexion.close()
-                print(f"[DB] {len(trades_a_escribir)} trades guardados en Precio_Tiempo_Real")
+                omitidos = len(trades_a_escribir) - filas_insertadas
+                mensaje = f"[DB] {filas_insertadas} trades guardados en Precio_Tiempo_Real"
+                if omitidos > 0:
+                    mensaje += f" ({omitidos} descartados por timestamp duplicado)"
+                print(mensaje)
                 break
             except (mysql.connector.errors.InterfaceError, mysql.connector.errors.OperationalError) as e:
                 print(f"[RECONEXIÓN] Falló guardar lote (intento {intento}/3): {e}")
                 time.sleep(2)
+            except mysql.connector.errors.IntegrityError as e:
+                # No debería pasar ya con INSERT IGNORE, pero por si acaso no
+                # tumbamos el hilo por un error de integridad inesperado.
+                print(f"[AVISO] Error de integridad al guardar el lote (se descarta este lote): {e}")
+                break
         else:
             print(f"[ABANDONADO] Se perdieron {len(trades_a_escribir)} trades tras 3 intentos.")
 
@@ -124,8 +146,6 @@ def on_open(ws):
     print("[WS ABIERTO] Suscribiendo tickers...")
     for ticker in id_instrumento_por_ticker.keys():
         ws.send(json.dumps({"type": "subscribe", "symbol": ticker}))
-        # Prueba temporal
-        # ws.send(json.dumps({"type": "subscribe", "symbol": "BINANCE:BTCUSDT"}))
         time.sleep(0.2)  # pequeña pausa para no saturar la suscripción
 
 
