@@ -9,6 +9,7 @@ yfinance, y datos sintéticos generados con Faker.
 ```
 BrokerHub/
 ├── .env                          # credenciales reales (NO se sube a git)
+├── .env.example                  # plantilla de variables necesarias
 ├── .gitignore
 ├── requirements.txt
 │
@@ -19,8 +20,10 @@ BrokerHub/
 │
 ├── carga_inicial.py              # puebla Emisor, Instrumento, Categoría, Cotización, Listado
 ├── generador_faker.py            # genera Cliente y Cuenta_Inversion sintéticos
-├── simulador_ordenes.py          # genera Orden, Transaccion_Ejecutada, Posicion
+├── simulador_ordenes.py          # genera Orden, Transaccion_Ejecutada, Posicion (histórico simulado)
 ├── streaming.py                  # WebSocket en vivo -> Precio_Tiempo_Real
+├── ejecutor_ordenes.py           # motor: ejecuta Órdenes PENDIENTE contra el precio en vivo
+├── colocar_orden.py              # utilidad para colocar una Orden PENDIENTE de prueba
 │
 └── exploracion_finnhub.ipynb     # notebook para explorar/visualizar datos con pandas
 ```
@@ -33,7 +36,7 @@ pip install -r requirements.txt
 
 ## 2. Configurar credenciales
 
-Completa con tus valores reales:
+Copia `.env.example` como `.env` y completa con tus valores reales:
 
 ```
 MYSQLHOST=tokaido.proxy.rlwy.net
@@ -68,11 +71,28 @@ python carga_inicial.py
 python generador_faker.py
 
 # 3. Órdenes, transacciones y posiciones (usa los precios reales ya cargados)
+#    Estas quedan ya EJECUTADAS -- es la simulación de "historial" del proyecto.
 python simulador_ordenes.py
 
-# 4. Streaming en vivo (dejar corriendo durante la demo)
+# 4. Streaming en vivo (dejar corriendo durante la demo, en su propia terminal)
 python streaming.py
+
+# 5. Ejecutor de órdenes en tiempo real (dejar corriendo, en OTRA terminal aparte)
+#    Revisa cada 5s las Órdenes en estado PENDIENTE y las ejecuta si el precio
+#    en vivo (o el último cierre histórico como respaldo) cumple el precio_limite.
+python ejecutor_ordenes.py
+
+# 6. (Solo para pruebas/demo) Colocar una Orden nueva en estado PENDIENTE,
+#    para ver cómo el ejecutor la toma y la resuelve en el siguiente ciclo.
+python colocar_orden.py
 ```
+
+### Cómo correr varios scripts a la vez (streaming + ejecutor)
+
+`streaming.py` y `ejecutor_ordenes.py` deben quedar corriendo **al mismo tiempo, en
+terminales separadas** (no una detrás de otra). En VS Code: `Terminal → New Terminal`
+(o el botón `+` del panel de terminal) para abrir una pestaña nueva por cada script,
+sin cerrar las anteriores.
 
 **Importante sobre `streaming.py`:** solo vas a ver trades llegando cuando el
 mercado de EE.UU. esté abierto — lunes a viernes, 9:30 AM a 4:00 PM hora de
@@ -88,7 +108,43 @@ SELECT COUNT(*) FROM Cotizacion_Historica;
 SELECT COUNT(*) FROM Orden;
 SELECT COUNT(*) FROM Posicion;
 SELECT COUNT(*) FROM Precio_Tiempo_Real;  -- solo tendrá datos si se corrió streaming.py en horario de mercado
+
+-- Ver órdenes pendientes vs ejecutadas
+SELECT estado, COUNT(*) FROM Orden GROUP BY estado;
 ```
+
+## Motor de ejecución de órdenes en tiempo real
+
+`ejecutor_ordenes.py` es lo que convierte el proyecto de "scripts que corren una
+vez" a una aplicación que reacciona en vivo:
+
+1. Un cliente coloca una `Orden` (queda en estado `PENDIENTE`) — ver `colocar_orden.py`.
+2. `streaming.py` sigue llenando `Precio_Tiempo_Real` con datos reales de Finnhub.
+3. `ejecutor_ordenes.py` revisa cada 5 segundos las órdenes `PENDIENTE` y las
+   compara contra el último precio conocido de su instrumento:
+   - **COMPRA** se ejecuta si `precio_actual <= precio_limite`
+   - **VENTA** se ejecuta si `precio_actual >= precio_limite`
+   - Si no hay ningún precio en vivo todavía (mercado cerrado), usa como
+     respaldo el último `precio_cierre` de `Cotizacion_Historica`.
+4. Al ejecutarse: crea la `Transaccion_Ejecutada`, actualiza `saldo_disponible`
+   de la cuenta, actualiza (o crea) la `Posicion` del cliente, y marca la
+   `Orden` como `EJECUTADA`.
+
+`streaming.py` y `ejecutor_ordenes.py` están pensados para correr **en paralelo**
+de forma indefinida (streaming captura precios, el ejecutor reacciona a ellos).
+
+## Funcionalidades futuras (fuera del alcance actual)
+
+- **Sugerencia por perfil de riesgo**: comparar el perfil de riesgo del cliente
+  (`Cliente.perfil_riesgo`) contra el nivel de riesgo del instrumento
+  (`Categoria_Instrumento.nivel_riesgo`) para mostrar una advertencia al colocar
+  una orden (no bloquear la operación, solo sugerir). Se dejó como funcionalidad
+  secundaria porque los 12 tickers elegidos son en su mayoría empresas grandes
+  (Blue Chip), por lo que hay poca variedad de riesgo real para demostrar la regla.
+- API (FastAPI) como capa de acceso a la aplicación.
+- Dashboard simple (ej. Streamlit) para visualizar portafolio y precios en vivo.
+- Ejecución parcial de órdenes (`PARCIALMENTE_EJECUTADA`) — actualmente el
+  ejecutor solo resuelve órdenes completas (todo o nada).
 
 ## Notas de diseño del modelo
 
