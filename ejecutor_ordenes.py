@@ -20,11 +20,27 @@ en lote" para minimizar el tiempo de conexión abierta a MySQL.
 
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from conexion_db import obtener_conexion
 import mysql.connector
 
 INTERVALO_REVISION_SEGUNDOS = 5
 COMISION_PORCENTAJE = 0.001  # 0.1%, igual que en simulador_ordenes.py
+
+
+def mercado_esta_abierto() -> bool:
+    """Horario de NYSE/NASDAQ: lunes a viernes, 9:30 AM - 4:00 PM hora de
+    Nueva York. No contempla feriados (simplificación aceptada para el
+    alcance del proyecto). Misma lógica que en main.py (API)."""
+    ahora_ny = datetime.now(ZoneInfo("America/New_York"))
+
+    if ahora_ny.weekday() >= 5:  # 5=sábado, 6=domingo
+        return False
+
+    apertura = ahora_ny.replace(hour=9, minute=30, second=0, microsecond=0)
+    cierre = ahora_ny.replace(hour=16, minute=0, second=0, microsecond=0)
+
+    return apertura <= ahora_ny <= cierre
 
 
 # ------------------------------------------------------------------
@@ -48,24 +64,28 @@ def leer_precios_actuales(cursor, ids_instrumento):
         return {}
 
     formato = ",".join(["%s"] * len(ids_instrumento))
+    precios = {}
 
-    # Prioridad 1: último precio en vivo (Precio_Tiempo_Real)
-    cursor.execute(
-        f"""SELECT pt.id_instrumento, pt.precio_actual
-            FROM Precio_Tiempo_Real pt
-            INNER JOIN (
-                SELECT id_instrumento, MAX(fecha_hora) AS max_fecha
-                FROM Precio_Tiempo_Real
-                WHERE id_instrumento IN ({formato})
-                GROUP BY id_instrumento
-            ) ultimo ON ultimo.id_instrumento = pt.id_instrumento
-                     AND ultimo.max_fecha = pt.fecha_hora""",
-        tuple(ids_instrumento),
-    )
-    precios = {fila[0]: float(fila[1]) for fila in cursor.fetchall()}
+    # Prioridad 1: último precio en vivo, SOLO si el mercado está abierto
+    # (si está cerrado, el último trade puede ser de horas atrás y ya no
+    # refleja el precio "actual" real -- se prefiere el cierre oficial)
+    if mercado_esta_abierto():
+        cursor.execute(
+            f"""SELECT pt.id_instrumento, pt.precio_actual
+                FROM Precio_Tiempo_Real pt
+                INNER JOIN (
+                    SELECT id_instrumento, MAX(fecha_hora) AS max_fecha
+                    FROM Precio_Tiempo_Real
+                    WHERE id_instrumento IN ({formato})
+                    GROUP BY id_instrumento
+                ) ultimo ON ultimo.id_instrumento = pt.id_instrumento
+                         AND ultimo.max_fecha = pt.fecha_hora""",
+            tuple(ids_instrumento),
+        )
+        precios = {fila[0]: float(fila[1]) for fila in cursor.fetchall()}
 
-    # Prioridad 2 (respaldo): último cierre histórico, para instrumentos
-    # que no tengan todavía ningún precio en vivo
+    # Prioridad 2 (respaldo): último cierre histórico -- para instrumentos
+    # sin precio en vivo, o para todos si el mercado está cerrado
     faltantes = [i for i in ids_instrumento if i not in precios]
     if faltantes:
         formato2 = ",".join(["%s"] * len(faltantes))

@@ -10,6 +10,7 @@ Documentación interactiva automática (para probar todo desde el navegador):
 
 from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -130,7 +131,7 @@ def obtener_portafolio(id_cliente: int):
     )
 
     for pos in posiciones:
-        precio_actual = obtener_ultimo_precio(pos["id_instrumento"])
+        precio_actual, _fuente = obtener_ultimo_precio(pos["id_instrumento"])
         pos["precio_actual"] = precio_actual
         if precio_actual is not None:
             pos["ganancia_perdida"] = round(
@@ -168,15 +169,35 @@ def listar_instrumentos():
     )
 
 
-def obtener_ultimo_precio(id_instrumento: int) -> Optional[float]:
-    """Precio en vivo si existe, si no cae al último cierre histórico."""
-    vivo = consultar(
-        """SELECT precio_actual FROM Precio_Tiempo_Real
-           WHERE id_instrumento = %s ORDER BY fecha_hora DESC LIMIT 1""",
-        (id_instrumento,),
-    )
-    if vivo:
-        return float(vivo[0]["precio_actual"])
+def mercado_esta_abierto() -> bool:
+    """Horario de NYSE/NASDAQ: lunes a viernes, 9:30 AM - 4:00 PM hora de
+    Nueva York. No contempla feriados (simplificación aceptada para el
+    alcance del proyecto)."""
+    ahora_ny = datetime.now(ZoneInfo("America/New_York"))
+
+    if ahora_ny.weekday() >= 5:  # 5=sábado, 6=domingo
+        return False
+
+    apertura = ahora_ny.replace(hour=9, minute=30, second=0, microsecond=0)
+    cierre = ahora_ny.replace(hour=16, minute=0, second=0, microsecond=0)
+
+    return apertura <= ahora_ny <= cierre
+
+
+def obtener_ultimo_precio(id_instrumento: int) -> tuple[Optional[float], str]:
+    """Si el mercado está abierto, prioriza el precio en vivo (Precio_Tiempo_Real).
+    Si el mercado está cerrado (o aún no ha llegado ningún dato en vivo), usa
+    el precio de cierre oficial más reciente (Cotizacion_Historica).
+    Devuelve (precio, fuente) donde fuente es "vivo", "historico" o "sin_datos".
+    """
+    if mercado_esta_abierto():
+        vivo = consultar(
+            """SELECT precio_actual FROM Precio_Tiempo_Real
+               WHERE id_instrumento = %s ORDER BY fecha_hora DESC LIMIT 1""",
+            (id_instrumento,),
+        )
+        if vivo:
+            return float(vivo[0]["precio_actual"]), "vivo"
 
     historico = consultar(
         """SELECT precio_cierre FROM Cotizacion_Historica
@@ -184,9 +205,9 @@ def obtener_ultimo_precio(id_instrumento: int) -> Optional[float]:
         (id_instrumento,),
     )
     if historico:
-        return float(historico[0]["precio_cierre"])
+        return float(historico[0]["precio_cierre"]), "historico"
 
-    return None
+    return None, "sin_datos"
 
 
 @app.get("/instrumentos/{ticker}/precio-actual")
@@ -197,11 +218,16 @@ def precio_actual(ticker: str):
     if not instrumento:
         raise HTTPException(status_code=404, detail="Ticker no encontrado")
 
-    precio = obtener_ultimo_precio(instrumento[0]["id_instrumento"])
+    precio, fuente = obtener_ultimo_precio(instrumento[0]["id_instrumento"])
     if precio is None:
         raise HTTPException(status_code=404, detail="Sin datos de precio para este instrumento")
 
-    return {"ticker": ticker, "precio": precio}
+    return {
+        "ticker": ticker,
+        "precio": precio,
+        "mercado_abierto": mercado_esta_abierto(),
+        "fuente": "precio en vivo" if fuente == "vivo" else "cierre histórico",
+    }
 
 
 @app.get("/instrumentos/{ticker}/historico")
