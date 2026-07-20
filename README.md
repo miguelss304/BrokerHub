@@ -25,6 +25,7 @@ BrokerHub/
 ├── ejecutor_ordenes.py           # motor: ejecuta Órdenes PENDIENTE contra el precio en vivo
 ├── colocar_orden.py              # utilidad para colocar una Orden PENDIENTE de prueba
 ├── main.py                       # API (FastAPI): expone el sistema por HTTP
+├── Procfile                      # comando de arranque para desplegar la API en Railway
 │
 └── exploracion_finnhub.ipynb     # notebook para explorar/visualizar datos con pandas
 ```
@@ -181,6 +182,26 @@ http://127.0.0.1:8000/docs
   `perfil_riesgo` se dejaron fuera intencionalmente hasta decidir cómo será
   la interfaz final (afecta qué datos se piden/validan en el `POST /ordenes`
   y en futuros endpoints de creación de clientes).
+
+### Despliegue en Railway
+
+La API ya está desplegada en Railway (mismo proyecto que el servicio de MySQL),
+accesible públicamente sin depender de que un computador esté prendido.
+
+- El `Procfile` le indica a Railway cómo arrancar la API:
+  ```
+  web: uvicorn main:app --host 0.0.0.0 --port $PORT
+  ```
+- Las variables de entorno (`MYSQLHOST`, `FINNHUB_API_KEY`, etc.) se configuran
+  por separado en la pestaña **Variables** del servicio de la API en Railway
+  (no reutiliza el `.env` local — cada entorno tiene las suyas).
+- El dominio público se genera en **Settings → Networking → Generate Domain**.
+- Verificar que sigue viva: `<url-de-railway>/health` debe responder
+  `{"status": "ok", "database": "conectada"}`.
+
+**Nota:** `streaming.py` y `ejecutor_ordenes.py` siguen corriendo localmente
+(no están desplegados en Railway todavía) — solo `main.py` (la API) vive en
+la nube por ahora.
 
 ## Funcionalidades futuras (fuera del alcance actual)
 
