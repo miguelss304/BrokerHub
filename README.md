@@ -24,6 +24,7 @@ BrokerHub/
 ├── streaming.py                  # WebSocket en vivo -> Precio_Tiempo_Real
 ├── ejecutor_ordenes.py           # motor: ejecuta Órdenes PENDIENTE contra el precio en vivo
 ├── colocar_orden.py              # utilidad para colocar una Orden PENDIENTE de prueba
+├── main.py                       # API (FastAPI): expone el sistema por HTTP
 │
 └── exploracion_finnhub.ipynb     # notebook para explorar/visualizar datos con pandas
 ```
@@ -85,6 +86,9 @@ python ejecutor_ordenes.py
 # 6. (Solo para pruebas/demo) Colocar una Orden nueva en estado PENDIENTE,
 #    para ver cómo el ejecutor la toma y la resuelve en el siguiente ciclo.
 python colocar_orden.py
+
+# 7. API (opcional, en su propia terminal): expone todo por HTTP
+uvicorn main:app --reload
 ```
 
 ### Cómo correr varios scripts a la vez (streaming + ejecutor)
@@ -133,16 +137,67 @@ vez" a una aplicación que reacciona en vivo:
 `streaming.py` y `ejecutor_ordenes.py` están pensados para correr **en paralelo**
 de forma indefinida (streaming captura precios, el ejecutor reacciona a ellos).
 
+## API (FastAPI)
+
+`main.py` expone el sistema por HTTP, para que cualquier interfaz (o herramienta
+como Postman) pueda consultar y operar sobre la base sin escribir SQL ni correr
+scripts a mano.
+
+### Cómo correrla
+
+```bash
+uvicorn main:app --reload
+```
+
+Documentación interactiva (para probar cada endpoint con botones, sin código):
+```
+http://127.0.0.1:8000/docs
+```
+
+### Endpoints disponibles
+
+| Método | Ruta | Qué hace |
+|---|---|---|
+| GET | `/health` | Confirma que la API y la base de datos están activas |
+| GET | `/clientes` | Lista todos los clientes |
+| GET | `/clientes/{id_cliente}` | Datos de un cliente específico |
+| GET | `/clientes/{id_cliente}/cuentas` | Cuentas de inversión de un cliente |
+| GET | `/clientes/{id_cliente}/portafolio` | Posiciones actuales, con precio actual y ganancia/pérdida no realizada |
+| GET | `/clientes/{id_cliente}/ordenes` | Historial de órdenes de un cliente |
+| GET | `/instrumentos` | Lista todos los instrumentos (acciones) disponibles |
+| GET | `/instrumentos/{ticker}/precio-actual` | Último precio conocido (en vivo, o histórico como respaldo) |
+| GET | `/instrumentos/{ticker}/historico?dias=30` | Histórico diario de precios |
+| POST | `/ordenes` | Coloca una orden nueva (queda `PENDIENTE`) |
+| GET | `/ordenes/{id_orden}` | Detalle de una orden y sus transacciones |
+| DELETE | `/ordenes/{id_orden}` | Cancela una orden (solo si sigue `PENDIENTE`) |
+
+### Notas de diseño
+
+- Tiene **CORS habilitado** (`allow_origins=["*"]`), para que cualquier
+  interfaz futura pueda consultarla desde el navegador sin bloqueos.
+- Los errores de conexión a MySQL (ej. Railway inactivo) se traducen a un
+  `503` con mensaje claro, en vez de un traceback de Python.
+- **Pendiente de definir**: validaciones relacionadas con `tipo_cliente` y
+  `perfil_riesgo` se dejaron fuera intencionalmente hasta decidir cómo será
+  la interfaz final (afecta qué datos se piden/validan en el `POST /ordenes`
+  y en futuros endpoints de creación de clientes).
+
 ## Funcionalidades futuras (fuera del alcance actual)
 
+- **Interfaz de usuario**: aún no se ha decidido cómo será. La opción
+  considerada por ahora es un dashboard simple con **Streamlit**
+  (rápido de construir en Python, sin necesidad de saber frontend "de verdad"),
+  consumiendo los endpoints de `main.py`. Pendiente de decisión final.
 - **Sugerencia por perfil de riesgo**: comparar el perfil de riesgo del cliente
   (`Cliente.perfil_riesgo`) contra el nivel de riesgo del instrumento
   (`Categoria_Instrumento.nivel_riesgo`) para mostrar una advertencia al colocar
   una orden (no bloquear la operación, solo sugerir). Se dejó como funcionalidad
   secundaria porque los 12 tickers elegidos son en su mayoría empresas grandes
   (Blue Chip), por lo que hay poca variedad de riesgo real para demostrar la regla.
-- API (FastAPI) como capa de acceso a la aplicación.
-- Dashboard simple (ej. Streamlit) para visualizar portafolio y precios en vivo.
+  También se omitió intencionalmente de la API (`main.py`) por ahora, hasta
+  definir la interfaz.
+- Despliegue de `main.py` en Railway (junto al servicio de MySQL), para que la
+  API sea accesible fuera de tu computador.
 - Ejecución parcial de órdenes (`PARCIALMENTE_EJECUTADA`) — actualmente el
   ejecutor solo resuelve órdenes completas (todo o nada).
 
