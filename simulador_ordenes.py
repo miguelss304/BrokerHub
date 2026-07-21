@@ -64,7 +64,7 @@ def simular_ordenes(cuentas, instrumentos, precios_por_instrumento):
     ordenes_a_insertar = []       # (id_cuenta, id_instrumento, tipo, cantidad, precio_limite, fecha_hora, estado)
     transacciones_a_insertar = [] # (indice_orden, cantidad_ejecutada, precio_ejecucion, fecha_hora, comision)
     saldos_finales = {c["id_cuenta"]: float(c["saldo_disponible"]) for c in cuentas}
-    posiciones = {}  # (id_cliente, id_instrumento) -> {cantidad, costo_total, fecha_primera_compra}
+    posiciones = {}  # (id_cuenta, id_instrumento) -> {cantidad, costo_total, fecha_primera_compra}
 
     id_cliente_por_cuenta = {c["id_cuenta"]: c["id_cliente"] for c in cuentas}
 
@@ -101,7 +101,7 @@ def simular_ordenes(cuentas, instrumentos, precios_por_instrumento):
                     continue  # no alcanza el saldo, se descarta esta orden
                 saldos_finales[id_cuenta] -= (valor_total + comision)
             else:  # VENTA - solo vende si ya tiene posición suficiente
-                clave_pos = (id_cliente, id_instrumento)
+                clave_pos = (id_cuenta, id_instrumento)
                 pos_actual = posiciones.get(clave_pos)
                 if not pos_actual or pos_actual["cantidad"] < cantidad:
                     continue  # no tiene suficientes unidades, se descarta
@@ -120,7 +120,7 @@ def simular_ordenes(cuentas, instrumentos, precios_por_instrumento):
             )
 
             # Actualiza posición en memoria
-            clave_pos = (id_cliente, id_instrumento)
+            clave_pos = (id_cuenta, id_instrumento)
             if tipo_orden == "COMPRA":
                 if clave_pos not in posiciones:
                     posiciones[clave_pos] = {
@@ -154,7 +154,11 @@ def escribir_resultados(ordenes, transacciones, saldos_finales, posiciones, max_
                 """SELECT AUTO_INCREMENT FROM information_schema.TABLES
                    WHERE table_schema = DATABASE() AND table_name = 'Orden'"""
             )
-            siguiente_id_orden = cursor.fetchone()[0]
+            fila_auto_increment = cursor.fetchone()[0]
+            # En tablas recién creadas y vacías, MySQL a veces devuelve NULL
+            # aquí en vez de 1 (no ha actualizado sus estadísticas internas
+            # todavía). En ese caso, el próximo id real es 1.
+            siguiente_id_orden = fila_auto_increment if fila_auto_increment is not None else 1
 
             # --- 2. Insertar TODAS las órdenes en un solo statement (batch real) ---
             cursor.executemany(
@@ -190,13 +194,13 @@ def escribir_resultados(ordenes, transacciones, saldos_finales, posiciones, max_
 
             # --- 5. Insertar/actualizar posiciones finales ---
             datos_posiciones = []
-            for (id_cliente, id_instrumento), pos in posiciones.items():
+            for (id_cuenta_pos, id_instrumento), pos in posiciones.items():
                 precio_promedio = round(pos["costo_total"] / pos["cantidad"], 4)
                 datos_posiciones.append(
-                    (id_cliente, id_instrumento, pos["cantidad"], precio_promedio, pos["fecha_primera_compra"])
+                    (id_cuenta_pos, id_instrumento, pos["cantidad"], precio_promedio, pos["fecha_primera_compra"])
                 )
             cursor.executemany(
-                """INSERT INTO Posicion (id_cliente, id_instrumento, cantidad, precio_promedio_compra, fecha_primera_compra)
+                """INSERT INTO Posicion (id_cuenta, id_instrumento, cantidad, precio_promedio_compra, fecha_primera_compra)
                    VALUES (%s, %s, %s, %s, %s)
                    ON DUPLICATE KEY UPDATE
                        cantidad = VALUES(cantidad),

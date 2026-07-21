@@ -119,14 +119,19 @@ def obtener_cuentas_cliente(id_cliente: int):
 
 @app.get("/clientes/{id_cliente}/portafolio")
 def obtener_portafolio(id_cliente: int):
-    """Muestra las posiciones actuales del cliente, con el precio actual
-    de cada instrumento y la ganancia/pérdida no realizada."""
+    """Muestra las posiciones actuales del cliente (consolidando todas sus
+    cuentas), con el precio actual de cada instrumento y la
+    ganancia/pérdida no realizada.
+
+    Nota: Posicion está ligada a Cuenta_Inversion (no directo a Cliente),
+    por eso se necesita el JOIN adicional con Cuenta_Inversion."""
     posiciones = consultar(
-        """SELECT p.id_instrumento, i.ticker, i.nombre, p.cantidad,
+        """SELECT p.id_cuenta, p.id_instrumento, i.ticker, i.nombre, p.cantidad,
                   p.precio_promedio_compra, p.fecha_primera_compra
            FROM Posicion p
+           JOIN Cuenta_Inversion c ON c.id_cuenta = p.id_cuenta
            JOIN Instrumento_Financiero i ON i.id_instrumento = p.id_instrumento
-           WHERE p.id_cliente = %s""",
+           WHERE c.id_cliente = %s""",
         (id_cliente,),
     )
 

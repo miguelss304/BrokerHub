@@ -117,7 +117,7 @@ def evaluar_ordenes(ordenes, precios_actuales):
 
     ejecuciones = []       # (id_orden, id_cuenta, id_cliente, id_instrumento, cantidad, precio_ejecucion, comision, tipo)
     saldos_delta = {}      # id_cuenta -> cuánto sumar/restar al saldo_disponible
-    posiciones_delta = {}  # (id_cliente, id_instrumento) -> {"cantidad_delta", "costo_delta"}
+    posiciones_delta = {}  # (id_cuenta, id_instrumento) -> {"cantidad_delta", "costo_delta"}
 
     for orden in ordenes:
         precio_actual = precios_actuales.get(orden["id_instrumento"])
@@ -146,7 +146,7 @@ def evaluar_ordenes(ordenes, precios_actuales):
         else:
             saldos_delta[orden["id_cuenta"]] = saldos_delta.get(orden["id_cuenta"], 0) + (valor_total - comision)
 
-        clave_pos = (orden["id_cliente"], orden["id_instrumento"])
+        clave_pos = (orden["id_cuenta"], orden["id_instrumento"])
         delta = posiciones_delta.setdefault(clave_pos, {"cantidad_delta": 0, "costo_delta": 0.0})
         if tipo == "COMPRA":
             delta["cantidad_delta"] += cantidad
@@ -205,11 +205,11 @@ def escribir_ejecuciones(cursor, ejecuciones, saldos_delta, posiciones_delta):
     )
 
     # 4. Actualizar/crear posiciones (necesita fusionar con lo que ya existe)
-    for (id_cliente, id_instrumento), delta in posiciones_delta.items():
+    for (id_cuenta_pos, id_instrumento), delta in posiciones_delta.items():
         cursor.execute(
             """SELECT cantidad, precio_promedio_compra FROM Posicion
-               WHERE id_cliente = %s AND id_instrumento = %s""",
-            (id_cliente, id_instrumento),
+               WHERE id_cuenta = %s AND id_instrumento = %s""",
+            (id_cuenta_pos, id_instrumento),
         )
         fila = cursor.fetchone()
 
@@ -221,25 +221,25 @@ def escribir_ejecuciones(cursor, ejecuciones, saldos_delta, posiciones_delta):
 
             if nueva_cantidad <= 0:
                 cursor.execute(
-                    "DELETE FROM Posicion WHERE id_cliente = %s AND id_instrumento = %s",
-                    (id_cliente, id_instrumento),
+                    "DELETE FROM Posicion WHERE id_cuenta = %s AND id_instrumento = %s",
+                    (id_cuenta_pos, id_instrumento),
                 )
             else:
                 nuevo_precio_prom = round(nuevo_costo / nueva_cantidad, 4)
                 cursor.execute(
                     """UPDATE Posicion SET cantidad = %s, precio_promedio_compra = %s
-                       WHERE id_cliente = %s AND id_instrumento = %s""",
-                    (nueva_cantidad, nuevo_precio_prom, id_cliente, id_instrumento),
+                       WHERE id_cuenta = %s AND id_instrumento = %s""",
+                    (nueva_cantidad, nuevo_precio_prom, id_cuenta_pos, id_instrumento),
                 )
         else:
             # No existía posición previa (solo puede pasar si la orden era de COMPRA)
             if delta["cantidad_delta"] > 0:
                 precio_prom = round(delta["costo_delta"] / delta["cantidad_delta"], 4)
                 cursor.execute(
-                    """INSERT INTO Posicion (id_cliente, id_instrumento, cantidad,
+                    """INSERT INTO Posicion (id_cuenta, id_instrumento, cantidad,
                                               precio_promedio_compra, fecha_primera_compra)
                        VALUES (%s, %s, %s, %s, %s)""",
-                    (id_cliente, id_instrumento, delta["cantidad_delta"], precio_prom, datetime.now().date()),
+                    (id_cuenta_pos, id_instrumento, delta["cantidad_delta"], precio_prom, datetime.now().date()),
                 )
 
 
@@ -286,4 +286,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()simul

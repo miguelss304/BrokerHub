@@ -19,7 +19,7 @@ fake = Faker("es_CO")
 # ------------------------------------------------------------------
 # Configuración
 # ------------------------------------------------------------------
-NUM_CLIENTES = 11
+NUM_CLIENTES = 30
 PERFILES_RIESGO = ["CONSERVADOR", "MODERADO", "AGRESIVO"]
 TIPOS_CUENTA = ["ORDINARIA", "RETIRO", "FIDUCIARIA"]
 
