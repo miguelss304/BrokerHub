@@ -10,6 +10,8 @@ notebook==7.6.0
 fastapi==0.139.2
 uvicorn==0.51.0
 tzdata==2025.2
+streamlit==1.30.0
+plotly==6.9.0
 
 #ejecutar lo siguiente en consola
 #pip install -r requirements.txt
