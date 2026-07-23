@@ -18,6 +18,16 @@ CREATE TABLE Cliente (
     CONSTRAINT chk_perfil_riesgo CHECK (perfil_riesgo IN ('CONSERVADOR','MODERADO','AGRESIVO'))
 );
 
+CREATE TABLE Credencial (
+    id_credencial     INT AUTO_INCREMENT PRIMARY KEY,
+    id_cliente        INT NOT NULL UNIQUE,  -- UNIQUE: 1 credencial por cliente
+    usuario           VARCHAR(50) NOT NULL UNIQUE,
+    contrasena_hash   VARCHAR(255) NOT NULL,
+    fecha_creacion    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ultimo_acceso     TIMESTAMP NULL,
+    FOREIGN KEY (id_cliente) REFERENCES Cliente(id_cliente)
+);
+
 CREATE TABLE Mercado_Bolsa (
     id_mercado          INT AUTO_INCREMENT PRIMARY KEY,
     nombre              VARCHAR(80) NOT NULL,
