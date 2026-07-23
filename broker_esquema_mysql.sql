@@ -183,3 +183,32 @@ CREATE TABLE Listado_Mercado (
         ON DELETE RESTRICT
         ON UPDATE CASCADE
 );
+
+-- ============================================================
+-- 4. TABLA AUXILIAR DE AUDITORIA
+-- ============================================================
+CREATE TABLE Bitacora_Movimiento_Cuenta (
+    id_movimiento     INT AUTO_INCREMENT PRIMARY KEY,
+    id_cuenta         INT NOT NULL,
+    id_transaccion    INT NOT NULL,
+    tipo_movimiento   VARCHAR(10) NOT NULL,   -- 'COMPRA' o 'VENTA'
+    monto             NUMERIC(16,2) NOT NULL,
+    saldo_resultante  NUMERIC(16,2) NOT NULL,
+    fecha_hora        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_tipo_movimiento CHECK (tipo_movimiento IN ('COMPRA','VENTA')),
+    FOREIGN KEY (id_cuenta) REFERENCES Cuenta_Inversion(id_cuenta)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    FOREIGN KEY (id_transaccion) REFERENCES Transaccion_Ejecutada(id_transaccion)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE TABLE Reporte_Riesgo_Cuenta (
+    id_reporte        INT AUTO_INCREMENT PRIMARY KEY,
+    id_cuenta         INT NOT NULL,
+    saldo_disponible  NUMERIC(16,2) NOT NULL,
+    valor_portafolio  NUMERIC(16,2) NOT NULL,
+    valor_total       NUMERIC(16,2) NOT NULL,
+    fecha_generacion  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+
