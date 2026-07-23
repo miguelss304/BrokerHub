@@ -1,6 +1,6 @@
-DROP DATABASE IF EXISTS brokerhub;
-CREATE DATABASE brokerhub;
-USE brokerhub;
+DROP DATABASE IF EXISTS railway;
+CREATE DATABASE railway;
+USE railway;
 
 -- ============================================================
 -- 1. ENTIDADES MAESTRAS
