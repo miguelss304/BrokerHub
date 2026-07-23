@@ -20,12 +20,14 @@ CREATE TABLE Cliente (
 
 CREATE TABLE Credencial (
     id_credencial     INT AUTO_INCREMENT PRIMARY KEY,
-    id_cliente        INT NOT NULL UNIQUE,  -- UNIQUE: 1 credencial por cliente
+    id_cliente        INT NOT NULL UNIQUE,
     usuario           VARCHAR(50) NOT NULL UNIQUE,
     contrasena_hash   VARCHAR(255) NOT NULL,
     fecha_creacion    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     ultimo_acceso     TIMESTAMP NULL,
     FOREIGN KEY (id_cliente) REFERENCES Cliente(id_cliente)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
 );
 
 CREATE TABLE Mercado_Bolsa (
@@ -63,8 +65,12 @@ CREATE TABLE Instrumento_Financiero (
     id_categoria         INT NOT NULL,
     fecha_listado        DATETIME NOT NULL,
     CONSTRAINT chk_tipo CHECK (tipo = 'ACCION'),
-    FOREIGN KEY (id_emisor) REFERENCES Emisor(id_emisor) ON DELETE RESTRICT,
-    FOREIGN KEY (id_categoria) REFERENCES Categoria_Instrumento(id_categoria) ON DELETE RESTRICT
+    FOREIGN KEY (id_emisor) REFERENCES Emisor(id_emisor)
+        ON DELETE RESTRICT
+        ON UPDATE CASCADE,
+    FOREIGN KEY (id_categoria) REFERENCES Categoria_Instrumento(id_categoria)
+        ON DELETE RESTRICT
+        ON UPDATE CASCADE
 );
 
 CREATE TABLE Cuenta_Inversion (
@@ -74,7 +80,9 @@ CREATE TABLE Cuenta_Inversion (
     saldo_disponible     NUMERIC(16,2) NOT NULL DEFAULT 0,
     fecha_apertura       DATE NOT NULL DEFAULT (CURRENT_DATE),
     estado               CHAR(1) NOT NULL DEFAULT 'A',
-    FOREIGN KEY (id_cliente) REFERENCES Cliente(id_cliente) ON DELETE RESTRICT,
+    FOREIGN KEY (id_cliente) REFERENCES Cliente(id_cliente)
+        ON DELETE RESTRICT
+        ON UPDATE CASCADE,
     CONSTRAINT chk_tipo_cuenta CHECK (tipo_cuenta IN ('ORDINARIA','RETIRO','FIDUCIARIA')),
     CONSTRAINT chk_estado_cuenta CHECK (estado IN ('A','I'))
 );
@@ -92,7 +100,9 @@ CREATE TABLE Cotizacion_Historica (
     precio_maximo        NUMERIC(14,4) NOT NULL,
     precio_minimo        NUMERIC(14,4) NOT NULL,
     volumen              BIGINT NOT NULL,
-    FOREIGN KEY (id_instrumento) REFERENCES Instrumento_Financiero(id_instrumento),
+    FOREIGN KEY (id_instrumento) REFERENCES Instrumento_Financiero(id_instrumento)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
     UNIQUE (id_instrumento, fecha)
 );
 
@@ -103,7 +113,8 @@ CREATE TABLE Precio_Tiempo_Real (
     volumen_tick         BIGINT,
     PRIMARY KEY (id_instrumento, fecha_hora),
     FOREIGN KEY (id_instrumento) REFERENCES Instrumento_Financiero(id_instrumento)
-        ON UPDATE CASCADE ON DELETE CASCADE
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
 );
 
 CREATE TABLE Orden (
@@ -118,8 +129,12 @@ CREATE TABLE Orden (
     CONSTRAINT chk_tipo_orden CHECK (tipo_orden IN ('COMPRA','VENTA')),
     CONSTRAINT chk_cantidad CHECK (cantidad > 0),
     CONSTRAINT chk_estados CHECK (estado IN ('PENDIENTE','PARCIALMENTE_EJECUTADA','EJECUTADA','CANCELADA')),
-    FOREIGN KEY (id_cuenta) REFERENCES Cuenta_Inversion(id_cuenta) ON DELETE RESTRICT,
+    FOREIGN KEY (id_cuenta) REFERENCES Cuenta_Inversion(id_cuenta)
+        ON DELETE RESTRICT
+        ON UPDATE CASCADE,
     FOREIGN KEY (id_instrumento) REFERENCES Instrumento_Financiero(id_instrumento)
+        ON DELETE RESTRICT
+        ON UPDATE CASCADE
 );
 
 CREATE TABLE Transaccion_Ejecutada (
@@ -129,15 +144,15 @@ CREATE TABLE Transaccion_Ejecutada (
     precio_ejecucion     NUMERIC(14,4) NOT NULL,
     fecha_hora           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     comision             NUMERIC(10,2) NOT NULL DEFAULT 0,
-    FOREIGN KEY (id_orden) REFERENCES Orden(id_orden) ON DELETE RESTRICT
+    FOREIGN KEY (id_orden) REFERENCES Orden(id_orden)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
 );
 
 -- ============================================================
 -- 3. RELACIONES M:N CON ATRIBUTOS PROPIOS
 -- ============================================================
 
--- Posicion queda conectada a CUENTA_INVERSION (esquema nuevo del equipo,
--- no a Cliente como en la version anterior)
 CREATE TABLE Posicion (
     id_cuenta                INT NOT NULL,
     id_instrumento           INT NOT NULL,
@@ -146,8 +161,12 @@ CREATE TABLE Posicion (
     fecha_primera_compra     DATE NOT NULL,
     PRIMARY KEY (id_cuenta, id_instrumento),
     CONSTRAINT chk_cantidad_posicion CHECK (cantidad > 0),
-    FOREIGN KEY (id_instrumento) REFERENCES Instrumento_Financiero(id_instrumento) ON DELETE RESTRICT,
-    FOREIGN KEY (id_cuenta) REFERENCES Cuenta_Inversion(id_cuenta) ON DELETE RESTRICT
+    FOREIGN KEY (id_instrumento) REFERENCES Instrumento_Financiero(id_instrumento)
+        ON DELETE RESTRICT
+        ON UPDATE CASCADE,
+    FOREIGN KEY (id_cuenta) REFERENCES Cuenta_Inversion(id_cuenta)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE
 );
 
 CREATE TABLE Listado_Mercado (
@@ -157,6 +176,10 @@ CREATE TABLE Listado_Mercado (
     moneda                VARCHAR(10) NOT NULL,
     fecha_listado         DATE NOT NULL,
     PRIMARY KEY (id_instrumento, id_mercado),
-    FOREIGN KEY (id_instrumento) REFERENCES Instrumento_Financiero(id_instrumento) ON DELETE RESTRICT,
-    FOREIGN KEY (id_mercado) REFERENCES Mercado_Bolsa(id_mercado) ON DELETE RESTRICT
+    FOREIGN KEY (id_instrumento) REFERENCES Instrumento_Financiero(id_instrumento)
+        ON DELETE CASCADE
+        ON UPDATE CASCADE,
+    FOREIGN KEY (id_mercado) REFERENCES Mercado_Bolsa(id_mercado)
+        ON DELETE RESTRICT
+        ON UPDATE CASCADE
 );
