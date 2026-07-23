@@ -37,7 +37,7 @@ def generar_cliente():
         "fecha_registro": fake.date_between(start_date="-2y", end_date="today"),
     }
     
-def generar_credencial(cliente):
+def generar_credencial(cliente, id_cliente):
     usuario = fake.unique.user_name()
     contrasena_plana = fake.password(length=12)
     contrasena_hash = hashlib.sha256(contrasena_plana.encode()).hexdigest()
@@ -45,7 +45,7 @@ def generar_credencial(cliente):
     ultimo_acceso = fake.date_time_between(start_date=fecha_creacion, end_date="now")
 
     return {
-        "id_cliente": cliente["id_cliente"],
+        "id_cliente": id_cliente,
         "usuario": usuario,
         "contrasena_hash": contrasena_hash,
         "fecha_creacion": fecha_creacion,
@@ -107,7 +107,7 @@ def main():
         try:
             cliente = generar_cliente()
             id_cliente = insertar_cliente(cursor, cliente)
-            credencial = generar_credencial(cliente)
+            credencial = generar_credencial(cliente, id_cliente)
             insertar_credenciales(cursor, credencial)
 
             # cada cliente tiene entre 1 y 2 cuentas
