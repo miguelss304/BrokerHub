@@ -9,6 +9,7 @@ Usa Faker en español (localización 'es_CO') para nombres y correos
 coherentes con el contexto del proyecto.
 """
 
+import hashlib
 import random
 from faker import Faker
 from conexion_db import obtener_conexion, asegurar_conexion, reconectar_forzado
@@ -30,13 +31,28 @@ def generar_cliente():
     return {
         "nombre_completo": nombre,
         "tipo_cliente": tipo_cliente,
-        "documento_identidad": fake.unique.numerify("#########"),
+        "documento_identidad": fake.unique.numerify("1########"),
         "perfil_riesgo": random.choice(PERFILES_RIESGO),
         "correo": fake.unique.email(),
         "fecha_registro": fake.date_between(start_date="-2y", end_date="today"),
     }
+    
+def generar_credencial(cliente):
+    usuario = fake.unique.user_name()
+    contrasena_plana = fake.password(length=12)
+    contrasena_hash = hashlib.sha256(contrasena_plana.encode()).hexdigest()
+    fecha_creacion = fake.date_between(start_date=cliente["fecha_registro"], end_date="today")
+    ultimo_acceso = fake.date_time_between(start_date=fecha_creacion, end_date="now")
 
+    return {
+        "id_cliente": cliente["id_cliente"],
+        "usuario": usuario,
+        "contrasena_hash": contrasena_hash,
+        "fecha_creacion": fecha_creacion,
+        "ultimo_acceso": ultimo_acceso,
+    }
 
+#id_cliente, usuario, contrasena_hash, fecha_creacion, ultimo_acceso
 def generar_cuenta(id_cliente):
     return {
         "id_cliente": id_cliente,
@@ -46,6 +62,16 @@ def generar_cuenta(id_cliente):
         "estado": "A",
     }
 
+
+def insertar_credenciales(cursor, credencial):
+    cursor.execute(
+        """INSERT INTO Credencial
+           (id_cliente, usuario, contrasena_hash, fecha_creacion, ultimo_acceso)
+           VALUES (%(id_cliente)s, %(usuario)s, %(contrasena_hash)s,
+                   %(fecha_creacion)s, %(ultimo_acceso)s)""",
+        credencial,
+    )
+    return cursor.lastrowid
 
 def insertar_cliente(cursor, cliente):
     cursor.execute(
@@ -81,6 +107,8 @@ def main():
         try:
             cliente = generar_cliente()
             id_cliente = insertar_cliente(cursor, cliente)
+            credencial = generar_credencial(cliente)
+            insertar_credenciales(cursor, credencial)
 
             # cada cliente tiene entre 1 y 2 cuentas
             num_cuentas = random.choice([1, 1, 1, 2])  # la mayoría con 1 sola cuenta
