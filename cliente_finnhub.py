@@ -46,7 +46,7 @@ def obtener_precio_actual(ticker):
 # YFINANCE - histórico diario (reemplaza al candle endpoint de Finnhub)
 # ------------------------------------------------------------------
 
-def obtener_historico(ticker, periodo="1y"):
+def obtener_historico(ticker, periodo="max"):
     """Trae histórico diario OHLCV usando yfinance.
     periodo: '1mo', '3mo', '6mo', '1y', '2y', 'max', etc.
     Devuelve una lista de diccionarios, uno por día, lista para insertar
