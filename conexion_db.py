@@ -17,6 +17,7 @@ def obtener_conexion():
         user=os.getenv("MYSQLUSER"),
         password=os.getenv("MYSQLPASSWORD"),
         database=os.getenv("MYSQLDATABASE"),
+        ssl_disabled=True,
     )
     return conexion
 
