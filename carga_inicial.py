@@ -24,9 +24,11 @@ from cliente_finnhub import (
 # Lista de tickers del proyecto
 # ------------------------------------------------------------------
 TICKERS = [
-    "MSI", "ETN", "CAH", "AZO", "AAPL",
-    "DUOL", "AXON", "NET", "IOT", "GTLB",
-    "EXTR", "ASTH", "BOOT", "CRCT", "INOD"
+    "AAPL", "MSFT", "NVDA", "GOOGL",
+    "XOM", "CVX",
+    "JPM", "BAC",
+    "JNJ", "PFE",
+    "KO", "WMT",
 ]
 
 MERCADOS = [
