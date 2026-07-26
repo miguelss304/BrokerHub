@@ -16,6 +16,8 @@ except ImportError:
     TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA"]
 
 API_BASE_URL = os.getenv("BROKERHUB_API_URL") or "https://brokerhub-api-production.up.railway.app"
+if not API_BASE_URL.startswith(("http://", "https://")):
+    API_BASE_URL = f"https://{API_BASE_URL}"
 API_BASE_URL = API_BASE_URL.rstrip("/")
 
 # ============================================================================
