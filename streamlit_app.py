@@ -4,6 +4,9 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 st.set_page_config(layout="wide", page_title="BrokerHub", initial_sidebar_state="collapsed")
 
@@ -14,6 +17,8 @@ except ImportError:
 
 API_BASE_URL = os.getenv("BROKERHUB_API_URL") or "https://brokerhub-api-production.up.railway.app"
 API_BASE_URL = API_BASE_URL.rstrip("/")
+
+st.caption(f"🔧 DEBUG: conectando a `{API_BASE_URL}`")
 
 # ============================================================================
 # FUNCIONES GLOBALES
@@ -31,7 +36,8 @@ def api_request(path: str, method: str = "get", token: str | None = None, json_b
             headers=headers,
             json=json_body,
             params=params,
-            timeout=10,
+            timeout=30,  # la BD está en Railway (remota), la API local necesita más margen
+            proxies={"http": None, "https": None},  # ignora proxy del sistema para localhost
         )
         if response.status_code >= 400:
             try:
@@ -44,7 +50,7 @@ def api_request(path: str, method: str = "get", token: str | None = None, json_b
         except Exception:
             return {}
     except requests.exceptions.RequestException as exc:
-        raise Exception(f"No se pudo conectar con la API. Intenta más tarde.")
+        raise Exception(f"No se pudo conectar con la API en {API_BASE_URL}. Detalle: {type(exc).__name__}: {exc}")
 
 def init_session_state():
     """Inicializa session state si no existe."""
@@ -67,6 +73,7 @@ init_session_state()
 # ============================================================================
 
 st.markdown("# 🏦 BrokerHub")
+st.caption("🔧 VERSION_DEBUG: v3-numeric-fix")
 
 token = st.session_state.token
 cliente_id = st.session_state.cliente_id
@@ -235,67 +242,138 @@ elif page == "Dashboard":
 
 elif page == "Mercado":
     st.header("Mercado - Gráficas")
-    
+
     try:
         instrumentos = api_request("/instrumentos")
     except Exception as exc:
-        st.error("No se pudo cargar instrumentos")
+        st.error(f"No se pudo cargar instrumentos: {exc}")
         st.stop()
-    
+
     if not instrumentos:
         st.warning("No hay instrumentos disponibles")
         st.stop()
-    
+
     df_inst = pd.DataFrame(instrumentos)
     opciones = [f"{row['ticker']} - {row['nombre']}" for _, row in df_inst[["ticker", "nombre"]].iterrows()]
-    
+
     col1, col2 = st.columns([3, 1])
-    
+
     with col1:
         seleccion = st.selectbox("Selecciona un instrumento", opciones)
-    
+
     with col2:
-        if st.button("Actualizar gráfica"):
+        if st.button("Actualizar gráficas"):
             st.cache_data.clear()
             st.rerun()
-    
+
     ticker = seleccion.split(" - ")[0]
     instrumento = df_inst[df_inst["ticker"] == ticker].iloc[0]
     instrument_id = instrumento["id_instrumento"]
-    
+
+    # ------------------------------------------------------------------
+    # Gráfica histórica: serie de línea, rango extenso (precio de cierre)
+    # ------------------------------------------------------------------
+    st.subheader("📈 Histórico (línea)")
     try:
         cotizaciones = api_request(f"/instrumentos/{instrument_id}/cotizaciones")
-        
-        if cotizaciones and len(cotizaciones) > 0:
-            df = pd.DataFrame(cotizaciones)
-            df["fecha"] = pd.to_datetime(df["fecha"])
-            df = df.sort_values("fecha")
-            
-            fig = go.Figure(
-                data=[
-                    go.Candlestick(
-                        x=df["fecha"],
-                        open=df["precio_apertura"],
-                        high=df["precio_maximo"],
-                        low=df["precio_minimo"],
-                        close=df["precio_cierre"],
-                        name=seleccion,
-                    )
-                ]
+
+        st.caption(f"🔧 DEBUG: ticker={ticker} | id_instrumento={instrument_id} | filas recibidas={len(cotizaciones) if cotizaciones else 0}")
+
+        if cotizaciones:
+            df_hist = pd.DataFrame(cotizaciones)
+            with st.expander("🔧 DEBUG: ver datos crudos"):
+                st.dataframe(df_hist)
+            df_hist["fecha"] = pd.to_datetime(df_hist["fecha"])
+            df_hist["precio_cierre"] = pd.to_numeric(df_hist["precio_cierre"], errors="coerce")
+            df_hist = df_hist.sort_values("fecha")
+
+            st.caption(f"🔧 DEBUG: dtype precio_cierre={df_hist['precio_cierre'].dtype} | min={df_hist['precio_cierre'].min()} | max={df_hist['precio_cierre'].max()}")
+            st.write("🔧 DEBUG primeros 5 valores:", df_hist["precio_cierre"].head().tolist())
+            st.write("🔧 DEBUG últimos 5 valores:", df_hist["precio_cierre"].tail().tolist())
+
+            import plotly.express as px
+            fig_hist = px.line(
+                df_hist,
+                x="fecha",
+                y="precio_cierre",
+                title=None,
             )
-            fig.update_layout(
-                xaxis_rangeslider_visible=False,
+            fig_hist.update_traces(line=dict(color="#4da6ff", width=2))
+            fig_hist.update_layout(
                 template="plotly_dark",
                 xaxis_title="Fecha",
-                yaxis_title="Precio",
-                height=500,
-                margin=dict(l=20, r=20, t=40, b=20),
+                yaxis_title="Precio de cierre",
+                height=400,
+                margin=dict(l=20, r=20, t=30, b=20),
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig_hist, use_container_width=True, key="chart_historico_v2_express")
         else:
-            st.info("No hay cotizaciones disponibles para este instrumento")
+            st.info("No hay cotizaciones históricas cargadas para este instrumento todavía.")
     except Exception as exc:
-        st.error(f"Error al cargar cotizaciones: {str(exc)}")
+        st.error(f"Error al cargar histórico: {exc}")
+
+    # ------------------------------------------------------------------
+    # Gráfica en vivo: velas, ventana corta (ticks de Precio_Tiempo_Real)
+    # ------------------------------------------------------------------
+    st.subheader("🕯️ En vivo (velas)")
+
+    ventana_min = st.select_slider(
+        "Ventana de tiempo",
+        options=[15, 30, 60, 120, 240],
+        value=60,
+        format_func=lambda m: f"Últimos {m} min",
+    )
+    intervalo_vela = st.select_slider(
+        "Tamaño de cada vela",
+        options=["30s", "1min", "5min"],
+        value="1min",
+    )
+
+    try:
+        ticks = api_request(f"/instrumentos/{instrument_id}/precios-vivo", params={"minutos": ventana_min})
+
+        if ticks and len(ticks) > 1:
+            df_vivo = pd.DataFrame(ticks)
+            df_vivo["fecha_hora"] = pd.to_datetime(df_vivo["fecha_hora"])
+            df_vivo["precio_actual"] = pd.to_numeric(df_vivo["precio_actual"], errors="coerce")
+            df_vivo = df_vivo.sort_values("fecha_hora").set_index("fecha_hora")
+
+            ohlc = df_vivo["precio_actual"].resample(intervalo_vela).ohlc().dropna()
+
+            if not ohlc.empty:
+                fig_vivo = go.Figure(
+                    data=[
+                        go.Candlestick(
+                            x=ohlc.index,
+                            open=ohlc["open"],
+                            high=ohlc["high"],
+                            low=ohlc["low"],
+                            close=ohlc["close"],
+                            name=f"{ticker} en vivo",
+                        )
+                    ]
+                )
+                fig_vivo.update_layout(
+                    xaxis_rangeslider_visible=False,
+                    template="plotly_dark",
+                    xaxis_title="Hora",
+                    yaxis_title="Precio",
+                    height=450,
+                    margin=dict(l=20, r=20, t=30, b=20),
+                )
+                st.plotly_chart(fig_vivo, use_container_width=True, key="chart_vivo")
+            else:
+                st.info("No hay suficientes ticks en la ventana elegida para formar velas. Prueba una ventana mayor.")
+        elif ticks:
+            st.info("Solo hay un tick registrado en esta ventana; espera a que lleguen más datos en vivo.")
+        else:
+            st.warning(
+                "No hay datos de precio en tiempo real para este instrumento en la ventana seleccionada. "
+                "Verifica que el servicio de streaming (streaming.py) esté corriendo y conectado a Finnhub, "
+                "y que el mercado esté abierto (Lun-Vie, 9:30am-4:00pm hora NY)."
+            )
+    except Exception as exc:
+        st.error(f"Error al cargar precios en vivo: {exc}")
 
 elif page == "Trading":
     st.header("Trading - Crear orden")

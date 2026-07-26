@@ -726,6 +726,27 @@ def cotizaciones_instrumento(id_instrumento: int, desde: Optional[date] = None, 
     return consultar(query, tuple(params))
 
 
+@app.get("/instrumentos/{id_instrumento}/precios-vivo", tags=["Instrumentos"])
+def precios_vivo_instrumento(id_instrumento: int, minutos: int = 60):
+    """Retorna los ticks de precio en tiempo real de los últimos N minutos
+    (por defecto 60), para armar gráficas de corto plazo (velas intradía)."""
+    resultado = consultar(
+        "SELECT id_instrumento FROM Instrumento_Financiero WHERE id_instrumento = %s",
+        (id_instrumento,),
+    )
+    if not resultado:
+        raise HTTPException(status_code=404, detail="Instrumento no encontrado")
+
+    return consultar(
+        """SELECT fecha_hora, precio_actual, volumen_tick
+           FROM Precio_Tiempo_Real
+           WHERE id_instrumento = %s
+             AND fecha_hora >= NOW() - INTERVAL %s MINUTE
+           ORDER BY fecha_hora ASC""",
+        (id_instrumento, minutos),
+    )
+
+
 @app.get("/instrumentos/{ticker}/precio-actual", tags=["Instrumentos"])
 def precio_actual(ticker: str):
     """Consulta el precio actual de cotización para un ticker en específico."""
