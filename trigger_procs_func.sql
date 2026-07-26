@@ -78,6 +78,114 @@ END$$
 
 DELIMITER ;
 
+-- ============================================================
+-- TRIGGER 3
+-- Actualiza saldo, posición y bitácora luego de insertar una
+-- transacción ejecutada. Garantiza que el estado de la orden se
+-- sincronice con el volumen ejecutado.
+-- ============================================================
+DELIMITER $$
+
+CREATE TRIGGER trg_actualizar_saldo_posicion_bitacora
+AFTER INSERT ON Transaccion_Ejecutada
+FOR EACH ROW
+BEGIN
+    DECLARE v_id_cuenta INT;
+    DECLARE v_tipo_orden VARCHAR(6);
+    DECLARE v_id_instrumento INT;
+    DECLARE v_cantidad_orden INT;
+    DECLARE v_total_ejecutado INT;
+    DECLARE v_cantidad_prev INT DEFAULT NULL;
+    DECLARE v_precio_promedio NUMERIC(14,4) DEFAULT NULL;
+    DECLARE v_nuevo_precio_promedio NUMERIC(14,4) DEFAULT 0;
+    DECLARE v_valor_total NUMERIC(16,2);
+    DECLARE v_saldo_resultante NUMERIC(16,2);
+    DECLARE v_tipo_movimiento VARCHAR(10);
+    DECLARE v_cantidad_restante INT;
+    DECLARE CONTINUE HANDLER FOR NOT FOUND
+        SET v_cantidad_prev = NULL, v_precio_promedio = NULL;
+
+    SELECT o.id_cuenta, o.id_instrumento, o.tipo_orden, o.cantidad
+    INTO v_id_cuenta, v_id_instrumento, v_tipo_orden, v_cantidad_orden
+    FROM Orden o
+    WHERE o.id_orden = NEW.id_orden;
+
+    SELECT COALESCE(SUM(cantidad_ejecutada), 0)
+    INTO v_total_ejecutado
+    FROM Transaccion_Ejecutada
+    WHERE id_orden = NEW.id_orden;
+
+    SET v_valor_total = ROUND(NEW.precio_ejecucion * NEW.cantidad_ejecutada, 2);
+
+    IF v_tipo_orden = 'COMPRA' THEN
+        SET v_tipo_movimiento = 'COMPRA';
+        UPDATE Cuenta_Inversion
+        SET saldo_disponible = saldo_disponible - (v_valor_total + NEW.comision)
+        WHERE id_cuenta = v_id_cuenta;
+    ELSE
+        SET v_tipo_movimiento = 'VENTA';
+        UPDATE Cuenta_Inversion
+        SET saldo_disponible = saldo_disponible + (v_valor_total - NEW.comision)
+        WHERE id_cuenta = v_id_cuenta;
+    END IF;
+
+    SELECT saldo_disponible INTO v_saldo_resultante
+    FROM Cuenta_Inversion
+    WHERE id_cuenta = v_id_cuenta;
+
+    SELECT cantidad, precio_promedio_compra
+    INTO v_cantidad_prev, v_precio_promedio
+    FROM Posicion
+    WHERE id_cuenta = v_id_cuenta AND id_instrumento = v_id_instrumento
+    LIMIT 1;
+
+    IF v_tipo_orden = 'COMPRA' THEN
+        IF v_cantidad_prev IS NULL OR v_cantidad_prev = 0 THEN
+            INSERT INTO Posicion (id_cuenta, id_instrumento, cantidad, precio_promedio_compra, fecha_primera_compra)
+            VALUES (v_id_cuenta, v_id_instrumento, NEW.cantidad_ejecutada, NEW.precio_ejecucion, CURRENT_DATE);
+        ELSE
+            SET v_nuevo_precio_promedio = ROUND((v_cantidad_prev * v_precio_promedio + v_valor_total) / (v_cantidad_prev + NEW.cantidad_ejecutada), 4);
+            UPDATE Posicion
+            SET cantidad = cantidad + NEW.cantidad_ejecutada,
+                precio_promedio_compra = v_nuevo_precio_promedio
+            WHERE id_cuenta = v_id_cuenta AND id_instrumento = v_id_instrumento;
+        END IF;
+    ELSE
+        IF v_cantidad_prev IS NULL THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Venta inválida: no existe posición previa para el instrumento.';
+        ELSE
+            SET v_cantidad_restante = v_cantidad_prev - NEW.cantidad_ejecutada;
+            IF v_cantidad_restante < 0 THEN
+                SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Venta inválida: la cantidad ejecutada excede la posición existente.';
+            ELSEIF v_cantidad_restante = 0 THEN
+                DELETE FROM Posicion
+                WHERE id_cuenta = v_id_cuenta AND id_instrumento = v_id_instrumento;
+            ELSE
+                UPDATE Posicion
+                SET cantidad = v_cantidad_restante
+                WHERE id_cuenta = v_id_cuenta AND id_instrumento = v_id_instrumento;
+            END IF;
+        END IF;
+    END IF;
+
+    IF v_total_ejecutado >= v_cantidad_orden THEN
+        UPDATE Orden SET estado = 'EJECUTADA' WHERE id_orden = NEW.id_orden;
+    ELSE
+        UPDATE Orden SET estado = 'PARCIALMENTE_EJECUTADA' WHERE id_orden = NEW.id_orden;
+    END IF;
+
+    INSERT INTO Bitacora_Movimiento_Cuenta (id_cuenta, id_transaccion, tipo_movimiento, monto, saldo_resultante)
+    VALUES (
+        v_id_cuenta,
+        NEW.id_transaccion,
+        v_tipo_movimiento,
+        CASE WHEN v_tipo_movimiento = 'COMPRA' THEN v_valor_total + NEW.comision ELSE v_valor_total - NEW.comision END,
+        v_saldo_resultante
+    );
+END$$
+
+DELIMITER ;
+
 -- Caso de prueba POSITIVO:
 -- UPDATE Orden SET estado = 'PARCIALMENTE_EJECUTADA' WHERE id_orden = 1 AND estado = 'PENDIENTE';
 
@@ -305,3 +413,149 @@ DELIMITER ;
 
 -- Uso: CALL sp_resumen_riesgo_cuentas();
 --      SELECT * FROM Reporte_Riesgo_Cuenta ORDER BY valor_total DESC;
+
+-- ============================================================
+-- FUNCION 3
+-- Calcula el valor total de una cuenta incluyendo saldo disponible
+-- y el valor de mercado de sus posiciones.
+-- ============================================================
+DELIMITER $$
+
+CREATE FUNCTION fn_valor_total_cuenta(p_id_cuenta INT)
+RETURNS NUMERIC(16,2)
+DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE v_saldo NUMERIC(16,2) DEFAULT 0;
+    DECLARE v_valor_portafolio NUMERIC(16,2) DEFAULT 0;
+
+    SELECT saldo_disponible INTO v_saldo
+    FROM Cuenta_Inversion
+    WHERE id_cuenta = p_id_cuenta;
+
+    SELECT COALESCE(SUM(fn_valor_mercado_posicion(p_id_cuenta, id_instrumento)), 0)
+    INTO v_valor_portafolio
+    FROM Posicion
+    WHERE id_cuenta = p_id_cuenta;
+
+    RETURN v_saldo + v_valor_portafolio;
+END$$
+
+DELIMITER ;
+
+-- ============================================================
+-- PROCEDIMIENTO 3
+-- Cancela una orden PENDIENTE. Útil para el módulo administrativo.
+-- ============================================================
+DELIMITER $$
+
+CREATE PROCEDURE sp_cancelar_orden(IN p_id_orden INT)
+BEGIN
+    DECLARE v_estado_actual VARCHAR(25);
+    DECLARE v_existe INT DEFAULT 0;
+
+    SELECT COUNT(*) INTO v_existe
+    FROM Orden
+    WHERE id_orden = p_id_orden;
+
+    IF v_existe = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La orden indicada no existe.';
+    END IF;
+
+    SELECT estado INTO v_estado_actual
+    FROM Orden
+    WHERE id_orden = p_id_orden;
+
+    IF v_estado_actual <> 'PENDIENTE' THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Solo se pueden cancelar órdenes en estado PENDIENTE.';
+    END IF;
+
+    UPDATE Orden
+    SET estado = 'CANCELADA'
+    WHERE id_orden = p_id_orden;
+END$$
+
+DELIMITER ;
+
+-- ============================================================
+-- PROCEDIMIENTO 4
+-- Cambia el estado de una cuenta entre activa e inactiva.
+-- ============================================================
+DELIMITER $$
+
+CREATE PROCEDURE sp_cambiar_estado_cuenta(IN p_id_cuenta INT, IN p_estado CHAR(1))
+BEGIN
+    DECLARE v_existe INT DEFAULT 0;
+
+    SELECT COUNT(*) INTO v_existe
+    FROM Cuenta_Inversion
+    WHERE id_cuenta = p_id_cuenta;
+
+    IF v_existe = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La cuenta indicada no existe.';
+    END IF;
+
+    IF p_estado NOT IN ('A', 'I') THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Estado de cuenta inválido. Use "A" o "I".';
+    END IF;
+
+    UPDATE Cuenta_Inversion
+    SET estado = p_estado
+    WHERE id_cuenta = p_id_cuenta;
+END$$
+
+DELIMITER ;
+
+-- ============================================================
+-- PROCEDIMIENTO 5
+-- Ajusta el saldo disponible de una cuenta. Solo para administración.
+-- ============================================================
+DELIMITER $$
+
+CREATE PROCEDURE sp_ajustar_saldo_cuenta(IN p_id_cuenta INT, IN p_nuevo_saldo NUMERIC(16,2))
+BEGIN
+    DECLARE v_existe INT DEFAULT 0;
+
+    SELECT COUNT(*) INTO v_existe
+    FROM Cuenta_Inversion
+    WHERE id_cuenta = p_id_cuenta;
+
+    IF v_existe = 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La cuenta indicada no existe.';
+    END IF;
+
+    IF p_nuevo_saldo < 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El saldo de la cuenta no puede ser negativo.';
+    END IF;
+
+    UPDATE Cuenta_Inversion
+    SET saldo_disponible = p_nuevo_saldo
+    WHERE id_cuenta = p_id_cuenta;
+END$$
+
+DELIMITER ;
+
+-- ============================================================
+-- PROCEDIMIENTO 6
+-- Genera una notificación administrativa manual para un cliente.
+-- ============================================================
+DELIMITER $$
+
+CREATE PROCEDURE sp_crear_notificacion_admin(
+    IN p_id_cliente INT,
+    IN p_tipo VARCHAR(30),
+    IN p_titulo VARCHAR(150),
+    IN p_mensaje TEXT
+)
+BEGIN
+    INSERT INTO Notificacion (id_cliente, tipo, titulo, mensaje)
+    VALUES (p_id_cliente, p_tipo, p_titulo, p_mensaje);
+END$$
+
+DELIMITER ;
+
+-- Uso:
+-- CALL sp_cancelar_orden(10);
+-- CALL sp_cambiar_estado_cuenta(3, 'I');
+-- CALL sp_ajustar_saldo_cuenta(3, 15000.00);
+-- CALL sp_crear_notificacion_admin(2, 'ADMIN', 'Ajuste de cuenta', 'El saldo de su cuenta ha sido ajustado por administración.');

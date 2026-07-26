@@ -93,10 +93,34 @@ class ClienteUpdate(BaseModel):
     perfil_riesgo: Optional[str] = None
 
 
+class AdminCuentaUpdate(BaseModel):
+    """Esquema para que un administrador actualice datos de una cuenta."""
+    tipo_cuenta: Optional[str] = None
+    saldo_disponible: Optional[float] = None
+    estado: Optional[str] = None
+
+
 class NuevaCuenta(BaseModel):
     """Esquema para abrir una nueva cuenta de inversión."""
     tipo_cuenta: str
     saldo_inicial: float = 0
+
+
+class NuevaNotificacion(BaseModel):
+    """Esquema para crear una notificación para un cliente."""
+    tipo: str
+    titulo: str
+    mensaje: str
+
+
+class AdminCuentaEstado(BaseModel):
+    """Esquema para cambiar el estado de una cuenta desde admin."""
+    estado: str
+
+
+class AjusteSaldo(BaseModel):
+    """Esquema para ajustar el saldo de una cuenta desde admin."""
+    nuevo_saldo: float
 
 
 # =============================================================================
@@ -123,6 +147,40 @@ def consultar(query: str, params: Optional[tuple] = None) -> list:
             status_code=503,
             detail=f"Base de datos no disponible en este momento: {e}",
         )
+
+
+def registrar_notificacion(id_cliente: int, tipo: str, titulo: str, mensaje: str, conexion=None, cursor=None, commit: bool = True) -> None:
+    """Registra una notificación para un cliente.
+
+    Este helper es usado internamente por las rutas de la API y por la lógica
+    administrativa. No hay dependencia directa con el módulo auxiliar
+    `notificaciones.py`, aunque su funcionalidad es equivalente.
+
+    Si se pasa un cursor o conexión existente, no los cierra localmente.
+    """
+    propio_cursor = False
+    propio_conexion = False
+
+    if cursor is None:
+        if conexion is None:
+            conexion = obtener_conexion()
+            propio_conexion = True
+        cursor = conexion.cursor()
+        propio_cursor = True
+
+    cursor.execute(
+        """INSERT INTO Notificacion (id_cliente, tipo, titulo, mensaje)
+           VALUES (%s, %s, %s, %s)""",
+        (id_cliente, tipo, titulo, mensaje),
+    )
+
+    if commit and conexion is not None:
+        conexion.commit()
+
+    if propio_cursor:
+        cursor.close()
+    if propio_conexion and conexion is not None:
+        conexion.close()
 
 
 def mercado_esta_abierto() -> bool:
@@ -196,6 +254,22 @@ def _validar_cliente_autorizado(id_cliente: int, id_cliente_autenticado: int) ->
     """Garantiza que un cliente solo pueda operar sobre su propio perfil."""
     if id_cliente != id_cliente_autenticado:
         raise HTTPException(status_code=403, detail="No tienes permisos sobre este cliente")
+
+
+def _validar_admin(cliente: dict) -> None:
+    """Garantiza que solo usuarios con rol ADMIN puedan acceder a ciertas rutas."""
+    if cliente.get("rol", "CLIENTE") != "ADMIN":
+        raise HTTPException(status_code=403, detail="Se requieren privilegios de administrador")
+
+
+def ejecutar_procedimiento(nombre_procedimiento: str, params: tuple = ()) -> None:
+    """Ejecuta un procedimiento almacenado en la base de datos."""
+    conexion = obtener_conexion()
+    cursor = conexion.cursor()
+    cursor.execute(f"CALL {nombre_procedimiento}({', '.join(['%s'] * len(params))})", params)
+    conexion.commit()
+    cursor.close()
+    conexion.close()
 
 
 # =============================================================================
@@ -294,6 +368,8 @@ def registrar_cliente(datos: NuevoCliente):
              datos.correo, datos.perfil_riesgo, datetime.now().date()),
         )
         id_cliente = cursor.lastrowid
+        if id_cliente is None:
+            raise HTTPException(status_code=500, detail="No se pudo determinar el id_cliente generado")
 
         # Guardar Credenciales asociadas (Hash de contraseña con Bcrypt)
         cursor.execute(
@@ -332,7 +408,7 @@ def registrar_cliente(datos: NuevoCliente):
 def login(datos: LoginRequest):
     """Autentica las credenciales de un usuario y retorna un Token JWT de acceso."""
     resultado = consultar(
-        """SELECT cr.id_cliente, cr.usuario, cr.contrasena_hash
+        """SELECT cr.id_cliente, cr.usuario, cr.contrasena_hash, cr.rol
            FROM Credencial cr
            WHERE cr.usuario = %s""",
         (datos.usuario,),
@@ -361,11 +437,22 @@ def login(datos: LoginRequest):
     except mysql.connector.Error:
         pass  # Tolerancia a fallos: no bloquea el login si este UPDATE falla
 
-    token = crear_token(credencial["id_cliente"], credencial["usuario"])
+    token = crear_token(credencial["id_cliente"], credencial["usuario"], credencial.get("rol", "CLIENTE"))
     return {
         "id_cliente": credencial["id_cliente"],
         "usuario": credencial["usuario"],
+        "rol": credencial.get("rol", "CLIENTE"),
         "token": token,
+    }
+
+
+@app.get("/auth/me", tags=["Autenticación"])
+def obtener_perfil_actual(cliente=Depends(obtener_cliente_actual)):
+    """Retorna los datos básicos del usuario autenticado según JWT."""
+    return {
+        "id_cliente": cliente["id_cliente"],
+        "usuario": cliente["usuario"],
+        "rol": cliente.get("rol", "CLIENTE"),
     }
 
 
@@ -464,6 +551,79 @@ def obtener_portafolio(id_cliente: int, cliente=Depends(obtener_cliente_actual))
     return posiciones
 
 
+@app.get("/clientes/{id_cliente}/notificaciones", tags=["Notificaciones"])
+def obtener_notificaciones(id_cliente: int, solo_no_leidas: bool = False, cliente=Depends(obtener_cliente_actual)):
+    """Devuelve las notificaciones de un cliente, opcionalmente solo las no leídas."""
+    _validar_cliente_autorizado(id_cliente, cliente["id_cliente"])
+
+    query = "SELECT id_notificacion, tipo, titulo, mensaje, fecha_hora, leida FROM Notificacion WHERE id_cliente = %s"
+    params = [id_cliente]
+    if solo_no_leidas:
+        query += " AND leida = 'N'"
+
+    query += " ORDER BY fecha_hora DESC"
+    resultado = consultar(query, tuple(params))
+
+    for notificacion in resultado:
+        notificacion["leida"] = notificacion["leida"] == "S"
+
+    return resultado
+
+
+@app.post("/clientes/{id_cliente}/notificaciones", status_code=201, tags=["Notificaciones"])
+def crear_notificacion_cliente(id_cliente: int, datos: NuevaNotificacion, cliente=Depends(obtener_cliente_actual)):
+    """Crea una notificación para el cliente autenticado."""
+    _validar_cliente_autorizado(id_cliente, cliente["id_cliente"])
+
+    try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor()
+        cursor.execute(
+            """INSERT INTO Notificacion (id_cliente, tipo, titulo, mensaje)
+               VALUES (%s, %s, %s, %s)""",
+            (id_cliente, datos.tipo, datos.titulo, datos.mensaje),
+        )
+        id_notificacion = cursor.lastrowid
+        conexion.commit()
+        cursor.close()
+        conexion.close()
+    except mysql.connector.Error as e:
+        raise HTTPException(status_code=503, detail=f"Base de datos no disponible: {e}")
+
+    return {
+        "mensaje": "Notificación creada correctamente",
+        "id_notificacion": id_notificacion,
+    }
+
+
+@app.patch("/clientes/{id_cliente}/notificaciones/{id_notificacion}/leer", tags=["Notificaciones"])
+def marcar_notificacion_como_leida(id_cliente: int, id_notificacion: int, cliente=Depends(obtener_cliente_actual)):
+    """Marca una notificación como leída."""
+    _validar_cliente_autorizado(id_cliente, cliente["id_cliente"])
+
+    resultado = consultar(
+        "SELECT id_notificacion FROM Notificacion WHERE id_notificacion = %s AND id_cliente = %s",
+        (id_notificacion, id_cliente),
+    )
+    if not resultado:
+        raise HTTPException(status_code=404, detail="Notificación no encontrada")
+
+    try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor()
+        cursor.execute(
+            "UPDATE Notificacion SET leida = 'S' WHERE id_notificacion = %s",
+            (id_notificacion,),
+        )
+        conexion.commit()
+        cursor.close()
+        conexion.close()
+    except mysql.connector.Error as e:
+        raise HTTPException(status_code=503, detail=f"Base de datos no disponible: {e}")
+
+    return {"mensaje": "Notificación marcada como leída"}
+
+
 @app.get("/clientes/{id_cliente}/ordenes", tags=["Clientes"])
 def obtener_ordenes_cliente(id_cliente: int, cliente=Depends(obtener_cliente_actual)):
     """Obtiene el historial de órdenes de un cliente ordenadas recientemente."""
@@ -510,6 +670,231 @@ def perfil_real_cliente(id_cliente: int, cliente=Depends(obtener_cliente_actual)
 
 
 # -----------------------------------------------------------------------------
+# 4. Admin y Control Total
+# -----------------------------------------------------------------------------
+
+@app.post("/admin/registro", status_code=201, tags=["Admin"])
+def registrar_admin(datos: NuevoCliente, cliente=Depends(obtener_cliente_actual)):
+    """Crea un nuevo usuario administrador. Solo accesible para admins existentes."""
+    _validar_admin(cliente)
+
+    if datos.tipo_cliente not in ("N", "J"):
+        raise HTTPException(status_code=400, detail="tipo_cliente debe ser 'N' o 'J'")
+    if datos.perfil_riesgo not in ("CONSERVADOR", "MODERADO", "AGRESIVO"):
+        raise HTTPException(status_code=400, detail="perfil_riesgo inválido")
+
+    existente = consultar(
+        "SELECT id_cliente FROM Credencial WHERE usuario = %s", (datos.usuario,)
+    )
+    if existente:
+        raise HTTPException(status_code=409, detail="Ese nombre de usuario ya está en uso")
+
+    try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor()
+
+        cursor.execute(
+            """INSERT INTO Cliente (nombre_completo, tipo_cliente, documento_identidad,
+                                         correo, perfil_riesgo, fecha_registro)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            (datos.nombre_completo, datos.tipo_cliente, datos.documento_identidad,
+             datos.correo, datos.perfil_riesgo, datetime.now().date()),
+        )
+        id_cliente_nuevo = cursor.lastrowid
+
+        cursor.execute(
+            """INSERT INTO Credencial (id_cliente, usuario, contrasena_hash, rol, fecha_creacion)
+               VALUES (%s, %s, %s, 'ADMIN', %s)""",
+            (id_cliente_nuevo, datos.usuario, hash_contrasena(datos.contrasena), datetime.now()),
+        )
+
+        conexion.commit()
+        cursor.close()
+        conexion.close()
+    except mysql.connector.IntegrityError as e:
+        raise HTTPException(status_code=409, detail=f"Datos duplicados: {e}")
+    except mysql.connector.Error as e:
+        raise HTTPException(status_code=503, detail=f"Base de datos no disponible: {e}")
+
+    return {
+        "mensaje": "Administrador creado correctamente",
+        "id_cliente": id_cliente_nuevo,
+    }
+
+
+@app.post("/admin/ordenes/{id_orden}/cancelar", tags=["Admin"])
+def admin_cancelar_orden(id_orden: int, cliente=Depends(obtener_cliente_actual)):
+    """Cancela una orden pendiente o parcial. Solo para admins."""
+    _validar_admin(cliente)
+
+    orden = consultar(
+        "SELECT o.id_orden, o.id_cuenta, o.estado, c.id_cliente FROM Orden o JOIN Cuenta_Inversion c ON o.id_cuenta = c.id_cuenta WHERE o.id_orden = %s",
+        (id_orden,),
+    )
+    if not orden:
+        raise HTTPException(status_code=404, detail="Orden no encontrada")
+
+    try:
+        ejecutar_procedimiento("sp_cancelar_orden", (id_orden,))
+        registrar_notificacion(
+            orden[0]["id_cliente"],
+            "ADMIN",
+            "Orden cancelada por administrador",
+            f"La orden #{id_orden} fue cancelada por el equipo de administración.",
+        )
+    except mysql.connector.Error as e:
+        raise HTTPException(status_code=503, detail=f"No se pudo cancelar la orden: {e}")
+
+    return {"mensaje": f"Orden #{id_orden} cancelada por administrador"}
+
+
+@app.patch("/admin/cuentas/{id_cuenta}/estado", tags=["Admin"])
+def admin_cambiar_estado_cuenta(id_cuenta: int, datos: AdminCuentaEstado, cliente=Depends(obtener_cliente_actual)):
+    """Activa o inactiva una cuenta de inversión."""
+    _validar_admin(cliente)
+
+    if datos.estado not in ("A", "I"):
+        raise HTTPException(status_code=400, detail="Estado de cuenta inválido. Use 'A' o 'I'.")
+
+    cuenta = consultar("SELECT id_cliente FROM Cuenta_Inversion WHERE id_cuenta = %s", (id_cuenta,))
+    if not cuenta:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+
+    try:
+        ejecutar_procedimiento("sp_cambiar_estado_cuenta", (id_cuenta, datos.estado))
+        registrar_notificacion(
+            cuenta[0]["id_cliente"],
+            "ADMIN",
+            "Cambio de estado de cuenta",
+            f"El estado de la cuenta #{id_cuenta} fue actualizado a '{datos.estado}' por administración.",
+        )
+    except mysql.connector.Error as e:
+        raise HTTPException(status_code=503, detail=f"No se pudo cambiar el estado de la cuenta: {e}")
+
+    return {"mensaje": f"Cuenta #{id_cuenta} actualizada a estado {datos.estado}"}
+
+
+@app.patch("/admin/cuentas/{id_cuenta}/saldo", tags=["Admin"])
+def admin_ajustar_saldo_cuenta(id_cuenta: int, datos: AjusteSaldo, cliente=Depends(obtener_cliente_actual)):
+    """Ajusta el saldo disponible de una cuenta."""
+    _validar_admin(cliente)
+
+    if datos.nuevo_saldo < 0:
+        raise HTTPException(status_code=400, detail="El saldo no puede ser negativo")
+
+    cuenta = consultar("SELECT id_cliente FROM Cuenta_Inversion WHERE id_cuenta = %s", (id_cuenta,))
+    if not cuenta:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+
+    try:
+        ejecutar_procedimiento("sp_ajustar_saldo_cuenta", (id_cuenta, datos.nuevo_saldo))
+        registrar_notificacion(
+            cuenta[0]["id_cliente"],
+            "ADMIN",
+            "Ajuste de saldo de cuenta",
+            f"El saldo disponible de la cuenta #{id_cuenta} fue ajustado a {datos.nuevo_saldo:.2f} por administración.",
+        )
+    except mysql.connector.Error as e:
+        raise HTTPException(status_code=503, detail=f"No se pudo ajustar el saldo de la cuenta: {e}")
+
+    return {"mensaje": f"Saldo de la cuenta #{id_cuenta} ajustado a {datos.nuevo_saldo:.2f}"}
+
+
+@app.patch("/admin/cuentas/{id_cuenta}", tags=["Admin"])
+def admin_actualizar_cuenta(id_cuenta: int, datos: AdminCuentaUpdate, cliente=Depends(obtener_cliente_actual)):
+    """Actualiza datos de una cuenta de inversión desde Admin."""
+    _validar_admin(cliente)
+
+    cambios = {}
+    if datos.tipo_cuenta is not None:
+        if datos.tipo_cuenta not in ("ORDINARIA", "RETIRO", "FIDUCIARIA"):
+            raise HTTPException(status_code=400, detail="tipo_cuenta inválido")
+        cambios["tipo_cuenta"] = datos.tipo_cuenta
+    if datos.saldo_disponible is not None:
+        if datos.saldo_disponible < 0:
+            raise HTTPException(status_code=400, detail="saldo_disponible no puede ser negativo")
+        cambios["saldo_disponible"] = datos.saldo_disponible
+    if datos.estado is not None:
+        if datos.estado not in ("A", "I"):
+            raise HTTPException(status_code=400, detail="estado inválido. Use 'A' o 'I'.")
+        cambios["estado"] = datos.estado
+
+    if not cambios:
+        return {"mensaje": "No hay cambios para aplicar"}
+
+    campos = ", ".join(f"{campo} = %s" for campo in cambios.keys())
+    valores = list(cambios.values()) + [id_cuenta]
+
+    cuenta = consultar("SELECT id_cliente FROM Cuenta_Inversion WHERE id_cuenta = %s", (id_cuenta,))
+    if not cuenta:
+        raise HTTPException(status_code=404, detail="Cuenta no encontrada")
+
+    try:
+        conexion = obtener_conexion()
+        cursor = conexion.cursor()
+        cursor.execute(f"UPDATE Cuenta_Inversion SET {campos} WHERE id_cuenta = %s", tuple(valores))
+        conexion.commit()
+        cursor.close()
+        conexion.close()
+
+        registrar_notificacion(
+            cuenta[0]["id_cliente"],
+            "ADMIN",
+            "Actualización de cuenta",
+            f"La cuenta #{id_cuenta} fue actualizada por administración.",
+        )
+    except mysql.connector.Error as e:
+        raise HTTPException(status_code=503, detail=f"No se pudo actualizar la cuenta: {e}")
+
+    return {"mensaje": "Cuenta actualizada correctamente"}
+
+
+@app.post("/admin/clientes/{id_cliente}/notificaciones", status_code=201, tags=["Admin"])
+def admin_crear_notificacion(id_cliente: int, datos: NuevaNotificacion, cliente=Depends(obtener_cliente_actual)):
+    """Envía una notificación administrativa a un cliente.
+
+    Esta ruta solo puede ser utilizada por administradores con rol ADMIN.
+    El controlador recibe el ID del cliente destino y persiste la notificación.
+    """
+    _validar_admin(cliente)
+
+    try:
+        registrar_notificacion(id_cliente, datos.tipo, datos.titulo, datos.mensaje)
+    except mysql.connector.Error as e:
+        raise HTTPException(status_code=503, detail=f"No se pudo crear la notificación: {e}")
+
+    return {"mensaje": "Notificación administrativa enviada correctamente"}
+
+
+@app.get("/admin/cuentas/credenciales", tags=["Admin"])
+def admin_listar_cuentas_credenciales(cliente=Depends(obtener_cliente_actual)):
+    """Lista cuentas junto a las credenciales asociadas.
+
+    Sólo el rol ADMIN puede ver esta información. Se devuelve el hash de la
+    contraseña tal como está guardado en la base de datos, no la contraseña en
+    texto plano.
+    """
+    _validar_admin(cliente)
+
+    return consultar(
+        """
+        SELECT ci.id_cuenta,
+               ci.id_cliente,
+               ci.tipo_cuenta,
+               ci.saldo_disponible,
+               ci.estado,
+               ci.fecha_apertura,
+               cr.usuario,
+               cr.rol,
+               cr.contrasena_hash
+        FROM Cuenta_Inversion ci
+        JOIN Credencial cr ON cr.id_cliente = ci.id_cliente
+        ORDER BY ci.id_cuenta
+        """
+    )
+
+
+# -----------------------------------------------------------------------------
 # 4. Movimientos Financieros (Cuentas)
 # -----------------------------------------------------------------------------
 
@@ -551,7 +936,8 @@ def depositar(id_cuenta: int, movimiento: MovimientoCuenta, cliente=Depends(obte
     if movimiento.monto <= 0:
         raise HTTPException(status_code=400, detail="El monto a depositar debe ser mayor a 0")
 
-    _validar_cuenta_del_cliente(id_cuenta, cliente["id_cliente"])
+    cuenta = _validar_cuenta_del_cliente(id_cuenta, cliente["id_cliente"])
+    saldo_nuevo = float(cuenta["saldo_disponible"]) + movimiento.monto
 
     try:
         conexion = obtener_conexion()
@@ -561,6 +947,12 @@ def depositar(id_cuenta: int, movimiento: MovimientoCuenta, cliente=Depends(obte
             (movimiento.monto, id_cuenta),
         )
         conexion.commit()
+        registrar_notificacion(
+            cliente["id_cliente"],
+            "SISTEMA",
+            "Depósito recibido",
+            f"Se ha acreditado ${movimiento.monto:.2f} en la cuenta #{id_cuenta}. Saldo disponible aproximado: ${saldo_nuevo:.2f}.",
+        )
         cursor.close()
         conexion.close()
     except mysql.connector.Error as e:
@@ -580,6 +972,8 @@ def retirar(id_cuenta: int, movimiento: MovimientoCuenta, cliente=Depends(obtene
     if float(cuenta["saldo_disponible"]) < movimiento.monto:
         raise HTTPException(status_code=400, detail="Saldo insuficiente para retirar ese monto")
 
+    saldo_nuevo = float(cuenta["saldo_disponible"]) - movimiento.monto
+
     try:
         conexion = obtener_conexion()
         cursor = conexion.cursor()
@@ -588,6 +982,12 @@ def retirar(id_cuenta: int, movimiento: MovimientoCuenta, cliente=Depends(obtene
             (movimiento.monto, id_cuenta),
         )
         conexion.commit()
+        registrar_notificacion(
+            cliente["id_cliente"],
+            "SISTEMA",
+            "Retiro realizado",
+            f"Se ha debitado ${movimiento.monto:.2f} de la cuenta #{id_cuenta}. Saldo disponible aproximado: ${saldo_nuevo:.2f}.",
+        )
         cursor.close()
         conexion.close()
     except mysql.connector.Error as e:
@@ -806,7 +1206,7 @@ def colocar_orden(orden: NuevaOrden):
         raise HTTPException(status_code=404, detail="Ticker no encontrado")
 
     cuenta = consultar(
-        "SELECT id_cuenta FROM Cuenta_Inversion WHERE id_cuenta = %s AND estado = 'A'",
+        "SELECT id_cuenta, id_cliente FROM Cuenta_Inversion WHERE id_cuenta = %s AND estado = 'A'",
         (orden.id_cuenta,),
     )
     if not cuenta:
@@ -830,6 +1230,12 @@ def colocar_orden(orden: NuevaOrden):
         )
         conexion.commit()
         id_orden = cursor.lastrowid
+        registrar_notificacion(
+            cuenta[0]["id_cliente"],
+            "ORDEN",
+            "Orden recibida",
+            f"Tu orden de {orden.cantidad} {orden.ticker} a {orden.precio_limite} fue recibida y está pendiente.",
+        )
         cursor.close()
         conexion.close()
     except mysql.connector.Error as e:
@@ -859,11 +1265,17 @@ def obtener_orden(id_orden: int):
 
 
 @app.delete("/ordenes/{id_orden}", tags=["Órdenes"])
-def cancelar_orden(id_orden: int):
+def cancelar_orden(id_orden: int, cliente=Depends(obtener_cliente_actual)):
     """Cancela una orden activa únicamente si su estado actual es PENDIENTE."""
-    resultado = consultar("SELECT estado FROM Orden WHERE id_orden = %s", (id_orden,))
+    resultado = consultar(
+        "SELECT o.estado, c.id_cliente FROM Orden o JOIN Cuenta_Inversion c ON c.id_cuenta = o.id_cuenta WHERE o.id_orden = %s",
+        (id_orden,),
+    )
     if not resultado:
         raise HTTPException(status_code=404, detail="Orden no encontrada")
+
+    if resultado[0]["id_cliente"] != cliente["id_cliente"]:
+        raise HTTPException(status_code=403, detail="No tienes permisos para cancelar esta orden")
 
     if resultado[0]["estado"] != "PENDIENTE":
         raise HTTPException(

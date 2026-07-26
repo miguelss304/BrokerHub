@@ -23,11 +23,13 @@ CREATE TABLE Credencial (
     id_cliente        INT NOT NULL UNIQUE,
     usuario           VARCHAR(50) NOT NULL UNIQUE,
     contrasena_hash   VARCHAR(255) NOT NULL,
+    rol               VARCHAR(20) NOT NULL DEFAULT 'CLIENTE',
     fecha_creacion    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     ultimo_acceso     TIMESTAMP NULL,
     FOREIGN KEY (id_cliente) REFERENCES Cliente(id_cliente)
         ON DELETE CASCADE
-        ON UPDATE CASCADE
+        ON UPDATE CASCADE,
+    CONSTRAINT chk_rol_credencial CHECK (rol IN ('CLIENTE','ADMIN'))
 );
 
 CREATE TABLE Mercado_Bolsa (
@@ -199,6 +201,19 @@ CREATE TABLE Bitacora_Movimiento_Cuenta (
     FOREIGN KEY (id_cuenta) REFERENCES Cuenta_Inversion(id_cuenta)
         ON DELETE CASCADE ON UPDATE CASCADE,
     FOREIGN KEY (id_transaccion) REFERENCES Transaccion_Ejecutada(id_transaccion)
+        ON DELETE CASCADE ON UPDATE CASCADE
+);
+
+CREATE TABLE Notificacion (
+    id_notificacion   INT AUTO_INCREMENT PRIMARY KEY,
+    id_cliente        INT NOT NULL,
+    tipo              VARCHAR(30) NOT NULL,
+    titulo            VARCHAR(150) NOT NULL,
+    mensaje           TEXT NOT NULL,
+    fecha_hora        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    leida             CHAR(1) NOT NULL DEFAULT 'N',
+    CONSTRAINT chk_notificacion_leida CHECK (leida IN ('S','N')),
+    FOREIGN KEY (id_cliente) REFERENCES Cliente(id_cliente)
         ON DELETE CASCADE ON UPDATE CASCADE
 );
 

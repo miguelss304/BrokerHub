@@ -38,11 +38,12 @@ def verificar_contrasena(contrasena_plana: str, contrasena_hash: str) -> bool:
 # Tokens JWT
 # ------------------------------------------------------------------
 
-def crear_token(id_cliente: int, usuario: str) -> str:
+def crear_token(id_cliente: int, usuario: str, rol: str = "CLIENTE") -> str:
     expiracion = datetime.now(timezone.utc) + timedelta(minutes=MINUTOS_EXPIRACION_TOKEN)
     payload = {
         "id_cliente": id_cliente,
         "usuario": usuario,
+        "rol": rol,
         "exp": expiracion,
     }
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITMO)

@@ -22,6 +22,7 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from conexion_db import obtener_conexion  
+from notificaciones import crear_notificacion
 from utils_mercado import mercado_esta_abierto
 import mysql.connector
 
@@ -226,6 +227,19 @@ def escribir_ejecuciones(cursor, ejecuciones, saldos_delta, posiciones_delta):
                        VALUES (%s, %s, %s, %s, %s)""",
                     (id_cuenta_pos, id_instrumento, delta["cantidad_delta"], precio_prom, datetime.now().date()),
                 )
+
+    # 5. Crear notificaciones de ejecución para el cliente
+    for ejecucion in ejecuciones:
+        tipo_orden = "COMPRA" if ejecucion["cantidad"] > 0 else "VENTA"
+        crear_notificacion(
+            ejecucion["id_cliente"],
+            "ORDEN",
+            f"Orden #{ejecucion['id_orden']} ejecutada",
+            f"Tu orden #{ejecucion['id_orden']} se ejecutó por {ejecucion['cantidad']} unidades a {ejecucion['precio_ejecucion']:.2f}. Comisión: ${ejecucion['comision']:.2f}.",
+            conexion=cursor.connection,
+            cursor=cursor,
+            commit=False,
+        )
 
 
 # ------------------------------------------------------------------
