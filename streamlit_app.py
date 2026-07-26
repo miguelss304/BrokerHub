@@ -342,7 +342,7 @@ with st.sidebar:
         es_activo = st.session_state.page == nombre
         wrapper_class = "bh-nav-active" if es_activo else ""
         st.markdown(f'<div class="{wrapper_class}">', unsafe_allow_html=True)
-        if st.button(f"{icono}  {nombre}", key=f"nav_{nombre}", width="stretch"):
+        if st.button(f"{icono}  {nombre}", key=f"nav_{nombre}", use_container_width=True):
             st.session_state.page = nombre
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
@@ -352,11 +352,11 @@ with st.sidebar:
 
     col_perfil, col_logout = st.columns(2)
     with col_perfil:
-        if st.button("👤 Perfil", width="stretch"):
+        if st.button("👤 Perfil", use_container_width=True):
             st.session_state.show_onboarding = not st.session_state.show_onboarding
             st.rerun()
     with col_logout:
-        if token and st.button("Salir", width="stretch"):
+        if token and st.button("Salir", use_container_width=True):
             st.session_state.clear()
             st.rerun()
 
@@ -397,7 +397,7 @@ if not token:
         with st.form("login_form"):
             usuario = st.text_input("Usuario")
             contrasena = st.text_input("Contraseña", type="password")
-            submitted = st.form_submit_button("Iniciar sesión", width="stretch")
+            submitted = st.form_submit_button("Iniciar sesión", use_container_width=True)
             if submitted:
                 try:
                     data = api_request(
@@ -422,7 +422,7 @@ if not token:
             usuario_reg = st.text_input("Nuevo usuario")
             perfil = st.selectbox("Perfil de riesgo", ["CONSERVADOR", "MODERADO", "AGRESIVO"])
             password_reg = st.text_input("Contraseña", type="password")
-            submitted_reg = st.form_submit_button("Registrar", width="stretch")
+            submitted_reg = st.form_submit_button("Registrar", use_container_width=True)
             if submitted_reg:
                 try:
                     data = api_request(
@@ -510,7 +510,7 @@ if page == "Dashboard":
         posiciones = api_request(f"/cuentas/{account_id}/posiciones", token=token)
         if posiciones:
             df_pos = pd.DataFrame(posiciones)
-            st.dataframe(df_pos, width="stretch")
+            st.dataframe(df_pos, use_container_width=True)
         else:
             st.info("No hay posiciones abiertas")
     except Exception as exc:
@@ -538,7 +538,7 @@ elif page == "Mercado":
     with col2:
         st.write("")
         st.write("")
-        if st.button("Actualizar gráficas", width="stretch"):
+        if st.button("Actualizar gráficas", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
 
@@ -579,7 +579,7 @@ elif page == "Mercado":
             )
             fig_hist.update_xaxes(gridcolor="#23402c")
             fig_hist.update_yaxes(gridcolor="#23402c")
-            st.plotly_chart(fig_hist, width="stretch", key="chart_historico_v2_express")
+            st.plotly_chart(fig_hist, use_container_width=True, key="chart_historico_v2_express")
         else:
             st.info("No hay cotizaciones históricas cargadas para este instrumento todavía.")
     except Exception as exc:
@@ -641,7 +641,7 @@ elif page == "Mercado":
                 )
                 fig_vivo.update_xaxes(gridcolor="#23402c")
                 fig_vivo.update_yaxes(gridcolor="#23402c")
-                st.plotly_chart(fig_vivo, width="stretch", key="chart_vivo")
+                st.plotly_chart(fig_vivo, use_container_width=True, key="chart_vivo")
             else:
                 st.info("No hay suficientes ticks en la ventana elegida para formar velas. Prueba una ventana mayor.")
         elif ticks:
@@ -669,7 +669,7 @@ elif page == "Trading":
             tipo_orden = st.selectbox("Tipo de orden", ["COMPRA", "VENTA"])
             cantidad = st.number_input("Cantidad", min_value=1, step=1)
             precio_limite = st.number_input("Precio límite", min_value=0.0, step=0.01)
-            submitted = st.form_submit_button("Crear orden", width="stretch")
+            submitted = st.form_submit_button("Crear orden", use_container_width=True)
 
             if submitted:
                 try:
@@ -698,7 +698,7 @@ elif page == "Portafolio":
         portafolio = api_request(f"/clientes/{cliente_id}/portafolio", token=token)
         if portafolio:
             df = pd.DataFrame(portafolio)
-            st.dataframe(df, width="stretch")
+            st.dataframe(df, use_container_width=True)
         else:
             st.info("No hay posiciones en el portafolio")
     except Exception as exc:
@@ -715,7 +715,7 @@ elif page == "Movimientos":
         with st.form("deposito"):
             st.markdown("**Depósito**")
             monto_dep = st.number_input("Monto a depositar", min_value=0.01, step=0.01, key="monto_dep")
-            submit_dep = st.form_submit_button("Depositar", width="stretch")
+            submit_dep = st.form_submit_button("Depositar", use_container_width=True)
 
             if submit_dep:
                 try:
@@ -733,7 +733,7 @@ elif page == "Movimientos":
         with st.form("retiro"):
             st.markdown("**Retiro**")
             monto_ret = st.number_input("Monto a retirar", min_value=0.01, step=0.01, key="monto_ret")
-            submit_ret = st.form_submit_button("Retirar", width="stretch")
+            submit_ret = st.form_submit_button("Retirar", use_container_width=True)
 
             if submit_ret:
                 try:
@@ -757,7 +757,7 @@ elif page == "Notificaciones":
             tipo = st.selectbox("Tipo de notificación", ["INFO", "ORDEN", "ALERTA", "SISTEMA"])
             titulo = st.text_input("Título")
             mensaje = st.text_area("Mensaje")
-            enviada = st.form_submit_button("Enviar notificación", width="stretch")
+            enviada = st.form_submit_button("Enviar notificación", use_container_width=True)
             if enviada:
                 try:
                     api_request(
@@ -896,7 +896,7 @@ elif page == "Admin":
                         token=token,
                     )
                     if cuentas_credenciales:
-                        st.dataframe(cuentas_credenciales, width="stretch")
+                        st.dataframe(cuentas_credenciales, use_container_width=True)
                     else:
                         st.info("No se encontraron cuentas ni credenciales.")
                 except Exception as exc:
