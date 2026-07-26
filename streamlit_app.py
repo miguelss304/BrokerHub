@@ -12,6 +12,10 @@ except ImportError:
 
 API_BASE_URL = os.getenv("BROKERHUB_API_URL", "http://127.0.0.1:8000").rstrip("/")
 
+# Debug: muestra qué URL está usando
+import sys
+print(f"DEBUG: BROKERHUB_API_URL = {API_BASE_URL}", file=sys.stderr)
+
 
 def api_request(path: str, method: str = "get", token: str | None = None, json_body: dict | None = None, params: dict | None = None):
     headers = {}
