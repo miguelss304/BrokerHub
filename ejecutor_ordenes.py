@@ -21,27 +21,12 @@ en lote" para minimizar el tiempo de conexión abierta a MySQL.
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from conexion_db import obtener_conexion
+from conexion_db import obtener_conexion  
+from utils_mercado import mercado_esta_abierto
 import mysql.connector
 
 INTERVALO_REVISION_SEGUNDOS = 5
 COMISION_PORCENTAJE = 0.001  # 0.1%, igual que en simulador_ordenes.py
-
-
-def mercado_esta_abierto() -> bool:
-    """Horario de NYSE/NASDAQ: lunes a viernes, 9:30 AM - 4:00 PM hora de
-    Nueva York. No contempla feriados (simplificación aceptada para el
-    alcance del proyecto). Misma lógica que en main.py (API)."""
-    ahora_ny = datetime.now(ZoneInfo("America/New_York"))
-
-    if ahora_ny.weekday() >= 5:  # 5=sábado, 6=domingo
-        return False
-
-    apertura = ahora_ny.replace(hour=9, minute=30, second=0, microsecond=0)
-    cierre = ahora_ny.replace(hour=16, minute=0, second=0, microsecond=0)
-
-    return apertura <= ahora_ny <= cierre
-
 
 # ------------------------------------------------------------------
 # FASE 1: LECTURA

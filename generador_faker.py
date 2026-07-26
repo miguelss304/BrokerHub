@@ -3,19 +3,21 @@ Generador de datos sintéticos para BrokerHub.
 
 Puebla, con datos ficticios pero realistas:
 - Cliente
+- Credencial (contraseña real con bcrypt, contraseña de demo conocida)
 - Cuenta_Inversion (1-2 cuentas por cliente)
 
 Usa Faker en español (localización 'es_CO') para nombres y correos
 coherentes con el contexto del proyecto.
 """
 
-import hashlib
 import random
 from faker import Faker
 from conexion_db import obtener_conexion, asegurar_conexion, reconectar_forzado
+from auth import hash_contrasena
 import mysql.connector
 
 fake = Faker("es_CO")
+CONTRASENA_DEMO = "Demo1234"  # SOLO para datos sintéticos de desarrollo/demo
 
 # ------------------------------------------------------------------
 # Configuración
@@ -36,13 +38,16 @@ def generar_cliente():
         "correo": fake.unique.email(),
         "fecha_registro": fake.date_between(start_date="-2y", end_date="today"),
     }
-    
-def generar_credencial(cliente, id_cliente):
+
+
+def generar_credencial(id_cliente, fecha_registro_cliente):
+    """Recibe el id_cliente REAL (ya generado por AUTO_INCREMENT tras el
+    INSERT en Cliente) y la fecha_registro del cliente, para que la
+    credencial nunca tenga una fecha_creacion anterior al registro."""
     usuario = fake.unique.user_name()
-    contrasena_plana = fake.password(length=12)
-    contrasena_hash = hashlib.sha256(contrasena_plana.encode()).hexdigest()
-    fecha_creacion = fake.date_between(start_date=cliente["fecha_registro"], end_date="today")
-    ultimo_acceso = fake.date_time_between(start_date=fecha_creacion, end_date="now")
+    contrasena_hash = hash_contrasena(CONTRASENA_DEMO)
+    fecha_creacion = fake.date_time_between(start_date=fecha_registro_cliente, end_date="now")
+    ultimo_acceso = None  # nadie ha entrado todavía a esta cuenta recién creada
 
     return {
         "id_cliente": id_cliente,
@@ -52,7 +57,7 @@ def generar_credencial(cliente, id_cliente):
         "ultimo_acceso": ultimo_acceso,
     }
 
-#id_cliente, usuario, contrasena_hash, fecha_creacion, ultimo_acceso
+
 def generar_cuenta(id_cliente):
     return {
         "id_cliente": id_cliente,
@@ -72,6 +77,7 @@ def insertar_credenciales(cursor, credencial):
         credencial,
     )
     return cursor.lastrowid
+
 
 def insertar_cliente(cursor, cliente):
     cursor.execute(
@@ -107,7 +113,11 @@ def main():
         try:
             cliente = generar_cliente()
             id_cliente = insertar_cliente(cursor, cliente)
-            credencial = generar_credencial(cliente, id_cliente)
+
+            # Se pasa el id_cliente real (generado por AUTO_INCREMENT) y
+            # la fecha_registro del cliente, en vez de leerlos del dict
+            # 'cliente' (que nunca tuvo la llave 'id_cliente').
+            credencial = generar_credencial(id_cliente, cliente["fecha_registro"])
             insertar_credenciales(cursor, credencial)
 
             # cada cliente tiene entre 1 y 2 cuentas
@@ -119,16 +129,18 @@ def main():
             conexion.commit()
             total_insertados += 1
             print(f"Cliente #{id_cliente} creado: {cliente['nombre_completo']} "
-                  f"({cliente['perfil_riesgo']}, {num_cuentas} cuenta(s))")
+                  f"(usuario: {credencial['usuario']}, {cliente['perfil_riesgo']}, {num_cuentas} cuenta(s))")
 
         except mysql.connector.errors.InterfaceError as e:
             print(f"[RECONEXIÓN] Se perdió la conexión en el cliente #{i+1}: {e}")
             conexion = reconectar_forzado(conexion)
         except mysql.connector.Error as e:
             print(f"[ERROR DB] Falló insertando cliente #{i+1}: {e}")
+            conexion.rollback()
 
     conexion.close()
     print(f"\nGeneración completa: {total_insertados}/{NUM_CLIENTES} clientes creados.")
+    print(f"Todos pueden loguearse en POST /auth/login con la contraseña: {CONTRASENA_DEMO}")
 
 
 if __name__ == "__main__":
