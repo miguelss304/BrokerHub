@@ -5,6 +5,9 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 
+# Configurar página PRIMERO antes de cualquier otra cosa
+st.set_page_config(layout="wide")
+
 try:
     from carga_inicial import TICKERS
 except ImportError:
@@ -12,10 +15,6 @@ except ImportError:
 
 API_BASE_URL = os.getenv("BROKERHUB_API_URL") or "https://brokerhub-api-production.up.railway.app"
 API_BASE_URL = API_BASE_URL.rstrip("/")
-
-# Debug: muestra qué URL está usando
-import sys
-print(f"DEBUG: BROKERHUB_API_URL = {API_BASE_URL}", file=sys.stderr)
 
 
 def api_request(path: str, method: str = "get", token: str | None = None, json_body: dict | None = None, params: dict | None = None):
@@ -58,19 +57,18 @@ def ensure_session_context() -> tuple[str | None, int | None, int | None]:
             data = api_request("/auth/login", method="post", json_body={"usuario": st.session_state.get("usuario", ""), "contrasena": st.session_state.get("password", "")})
             st.session_state["cliente_id"] = data.get("id_cliente")
             st.session_state["token"] = data.get("token")
-        except Exception:
+        except Exception as e:
             pass
     if token and account_id is None and cliente_id is not None:
         try:
             cuentas = api_request(f"/clientes/{cliente_id}/cuentas", token=token)
             if isinstance(cuentas, list) and cuentas:
                 st.session_state["account_id"] = cuentas[0]["id_cuenta"]
-        except Exception:
+        except Exception as e:
             pass
     return token, cliente_id, account_id
 
 
-st.set_page_config(layout="wide")
 st.title("BrokerHub UI")
 st.caption("Frontend conectado a la API de corretaje")
 
