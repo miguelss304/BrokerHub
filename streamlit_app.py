@@ -317,10 +317,11 @@ elif page == "Trading":
             if submitted:
                 try:
                     result = api_request(
-                        f"/cuentas/{account_id}/ordenes",
+                        "/ordenes",
                         method="post",
                         token=token,
                         json_body={
+                            "id_cuenta": account_id,
                             "ticker": ticker,
                             "tipo_orden": tipo_orden,
                             "cantidad": cantidad,
@@ -366,7 +367,7 @@ elif page == "Movimientos":
             if submit_dep:
                 try:
                     result = api_request(
-                        f"/cuentas/{account_id}/deposito",
+                        f"/cuentas/{account_id}/depositos",
                         method="post",
                         token=token,
                         json_body={"monto": float(monto_dep)},
@@ -384,7 +385,7 @@ elif page == "Movimientos":
             if submit_ret:
                 try:
                     result = api_request(
-                        f"/cuentas/{account_id}/retiro",
+                        f"/cuentas/{account_id}/retiros",
                         method="post",
                         token=token,
                         json_body={"monto": float(monto_ret)},
