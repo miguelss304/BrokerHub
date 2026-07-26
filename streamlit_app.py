@@ -1,12 +1,11 @@
 import os
-
 import pandas as pd
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+from datetime import datetime
 
-# Configurar página PRIMERO antes de cualquier otra cosa
-st.set_page_config(layout="wide")
+st.set_page_config(layout="wide", page_title="BrokerHub", initial_sidebar_state="collapsed")
 
 try:
     from carga_inicial import TICKERS
@@ -16,6 +15,9 @@ except ImportError:
 API_BASE_URL = os.getenv("BROKERHUB_API_URL") or "https://brokerhub-api-production.up.railway.app"
 API_BASE_URL = API_BASE_URL.rstrip("/")
 
+# ============================================================================
+# FUNCIONES GLOBALES
+# ============================================================================
 
 def api_request(path: str, method: str = "get", token: str | None = None, json_body: dict | None = None, params: dict | None = None):
     headers = {}
@@ -42,64 +44,75 @@ def api_request(path: str, method: str = "get", token: str | None = None, json_b
         except Exception:
             return {}
     except requests.exceptions.RequestException as exc:
-        raise Exception(
-            f"No se pudo conectar con la API en {API_BASE_URL}. "
-            "Configura BROKERHUB_API_URL con la URL de tu API desplegada o asegúrate de que tu API local esté disponible."
-        ) from exc
+        raise Exception(f"No se pudo conectar con la API. Intenta más tarde.")
 
+def init_session_state():
+    """Inicializa session state si no existe."""
+    if "token" not in st.session_state:
+        st.session_state.token = None
+    if "cliente_id" not in st.session_state:
+        st.session_state.cliente_id = None
+    if "account_id" not in st.session_state:
+        st.session_state.account_id = None
+    if "usuario" not in st.session_state:
+        st.session_state.usuario = None
+    if "page" not in st.session_state:
+        st.session_state.page = "Onboarding"
 
-def ensure_session_context() -> tuple[str | None, int | None, int | None]:
-    token = st.session_state.get("token")
-    cliente_id = st.session_state.get("cliente_id")
-    account_id = st.session_state.get("account_id")
-    if token and cliente_id is None:
-        try:
-            data = api_request("/auth/login", method="post", json_body={"usuario": st.session_state.get("usuario", ""), "contrasena": st.session_state.get("password", "")})
-            st.session_state["cliente_id"] = data.get("id_cliente")
-            st.session_state["token"] = data.get("token")
-        except Exception as e:
-            pass
-    if token and account_id is None and cliente_id is not None:
-        try:
-            cuentas = api_request(f"/clientes/{cliente_id}/cuentas", token=token)
-            if isinstance(cuentas, list) and cuentas:
-                st.session_state["account_id"] = cuentas[0]["id_cuenta"]
-        except Exception as e:
-            pass
-    return token, cliente_id, account_id
+init_session_state()
 
+# ============================================================================
+# NAVEGACIÓN - BOTONES ESTÉTICOS
+# ============================================================================
 
-st.title("BrokerHub UI")
-st.caption("Frontend conectado a la API de corretaje")
+st.markdown("# 🏦 BrokerHub")
 
-menu = st.sidebar.radio(
-    "Módulos",
-    [
-        "Onboarding",
-        "Dashboard",
-        "Mercado",
-        "Trading",
-        "Portafolio",
-        "Movimientos",
-        "Notificaciones",
-        "Admin/Backoffice",
-    ],
-)
+token = st.session_state.get("token")
+cliente_id = st.session_state.get("cliente_id")
 
-with st.sidebar.expander("Autenticación", expanded=True):
-    token, cliente_id, account_id = ensure_session_context()
-    if token:
-        st.success("Sesión activa")
-        st.write(f"Cliente ID: {cliente_id}")
-        st.write(f"Cuenta ID: {account_id}")
-        if st.button("Cerrar sesión"):
-            st.session_state.clear()
+# Barra de navegación
+col_nav = st.columns(8)
+botones = ["Onboarding", "Dashboard", "Mercado", "Trading", "Portafolio", "Movimientos", "Notificaciones", "Admin"]
+
+for i, boton in enumerate(botones):
+    with col_nav[i]:
+        if st.button(boton, use_container_width=True, type="secondary"):
+            st.session_state.page = boton
             st.rerun()
+
+st.divider()
+
+# ============================================================================
+# AUTENTICACIÓN (SIDEBAR MÍNIMO)
+# ============================================================================
+
+auth_col1, auth_col2 = st.columns([3, 1])
+
+with auth_col1:
+    if token:
+        st.success(f"✅ Sesión activa ({st.session_state.usuario})")
     else:
+        st.info("❌ No autenticado")
+
+with auth_col2:
+    if token and st.button("Cerrar sesión", type="primary"):
+        st.session_state.clear()
+        st.rerun()
+
+# ============================================================================
+# MODAL DE AUTENTICACIÓN
+# ============================================================================
+
+if not token:
+    st.markdown("### Autenticación")
+    
+    tab_login, tab_registro = st.tabs(["Iniciar sesión", "Registrarse"])
+    
+    with tab_login:
         with st.form("login_form"):
             usuario = st.text_input("Usuario")
             contrasena = st.text_input("Contraseña", type="password")
-            submitted = st.form_submit_button("Iniciar sesión")
+            submitted = st.form_submit_button("Iniciar sesión", use_container_width=True)
             if submitted:
                 try:
                     data = api_request(
@@ -110,12 +123,12 @@ with st.sidebar.expander("Autenticación", expanded=True):
                     st.session_state["token"] = data.get("token")
                     st.session_state["cliente_id"] = data.get("id_cliente")
                     st.session_state["usuario"] = data.get("usuario")
-                    st.session_state["password"] = contrasena
                     st.success("Inicio de sesión correcto")
                     st.rerun()
                 except Exception as exc:
                     st.error(str(exc))
-
+    
+    with tab_registro:
         with st.form("registro_form"):
             nombre = st.text_input("Nombre completo")
             documento = st.text_input("Documento de identidad")
@@ -123,7 +136,7 @@ with st.sidebar.expander("Autenticación", expanded=True):
             usuario_reg = st.text_input("Nuevo usuario")
             perfil = st.selectbox("Perfil de riesgo", ["CONSERVADOR", "MODERADO", "AGRESIVO"])
             password_reg = st.text_input("Contraseña", type="password")
-            submitted_reg = st.form_submit_button("Registrar")
+            submitted_reg = st.form_submit_button("Registrar", use_container_width=True)
             if submitted_reg:
                 try:
                     data = api_request(
@@ -146,44 +159,69 @@ with st.sidebar.expander("Autenticación", expanded=True):
                     st.rerun()
                 except Exception as exc:
                     st.error(str(exc))
+    
+    st.stop()
 
-if menu == "Onboarding":
+# ============================================================================
+# CARGA DE DATOS DE CUENTA (CACHEO)
+# ============================================================================
+
+@st.cache_data(ttl=60)
+def get_account_data(cliente_id, token):
+    """Obtiene datos de la cuenta del cliente (cacheado por 60 segundos)."""
+    try:
+        cuentas = api_request(f"/clientes/{cliente_id}/cuentas", token=token)
+        if isinstance(cuentas, list) and cuentas:
+            return cuentas[0]["id_cuenta"]
+    except Exception:
+        pass
+    return None
+
+if not st.session_state.account_id:
+    account_id = get_account_data(cliente_id, token)
+    if account_id:
+        st.session_state.account_id = account_id
+
+account_id = st.session_state.get("account_id")
+
+# ============================================================================
+# PÁGINAS
+# ============================================================================
+
+page = st.session_state.page
+
+if page == "Onboarding":
     st.header("Onboarding")
-    st.subheader("Registro, identidad y perfil de riesgo")
-    st.info("El registro y el login ya están conectados a la API. Usa el panel lateral para entrar.")
-    if st.session_state.get("token"):
-        st.success("Ya tienes una sesión activa y puedes pasar al dashboard.")
+    st.info("✅ Ya tienes una sesión activa. Elige un módulo arriba para empezar.")
 
-elif menu == "Dashboard":
+elif page == "Dashboard":
     st.header("Dashboard")
-    token, cliente_id, account_id = ensure_session_context()
-    if not token or cliente_id is None:
-        st.warning("Inicia sesión para ver el dashboard")
+    
+    if not account_id:
+        st.warning("No se pudo cargar la cuenta. Intenta recargar la página.")
         st.stop()
-
+    
     col1, col2, col3 = st.columns(3)
+    
     try:
         saldo = api_request(f"/cuentas/{account_id}/saldo", token=token)
-        col1.metric("Saldo disponible", f"${saldo.get('saldo_disponible', 0):.2f}")
+        col1.metric("💰 Saldo disponible", f"${saldo.get('saldo_disponible', 0):.2f}")
     except Exception as exc:
-        col1.metric("Saldo disponible", "Error")
-        st.caption(str(exc))
-
+        col1.error("Error al cargar saldo")
+    
     try:
         valor = api_request(f"/cuentas/{account_id}/valor-portafolio", token=token)
-        col2.metric("Valor de portafolio", f"${valor.get('valor_portafolio', 0):.2f}")
+        col2.metric("📊 Valor de portafolio", f"${valor.get('valor_portafolio', 0):.2f}")
     except Exception as exc:
-        col2.metric("Valor de portafolio", "Error")
-        st.caption(str(exc))
-
+        col2.error("Error al cargar portafolio")
+    
     try:
         rentabilidad = api_request(f"/cuentas/{account_id}/rentabilidad", token=token)
-        col3.metric("Rentabilidad total", f"{rentabilidad.get('rentabilidad_total', 0):.2f}")
+        col3.metric("📈 Rentabilidad total", f"{rentabilidad.get('rentabilidad_total', 0):.2f}%")
     except Exception as exc:
-        col3.metric("Rentabilidad total", "Error")
-        st.caption(str(exc))
-
-    st.subheader("Resumen de posiciones")
+        col3.error("Error al cargar rentabilidad")
+    
+    st.subheader("Posiciones abiertas")
     try:
         posiciones = api_request(f"/cuentas/{account_id}/posiciones", token=token)
         if posiciones:
@@ -194,183 +232,170 @@ elif menu == "Dashboard":
     except Exception as exc:
         st.error(str(exc))
 
-elif menu == "Mercado":
-    st.header("Mercado")
-    token, cliente_id, account_id = ensure_session_context()
+elif page == "Mercado":
+    st.header("Mercado - Gráficas")
+    
     try:
         instrumentos = api_request("/instrumentos")
     except Exception as exc:
-        st.error(str(exc))
+        st.error("No se pudo cargar instrumentos")
         st.stop()
-
+    
     if not instrumentos:
-        st.warning("No se pudieron cargar instrumentos")
+        st.warning("No hay instrumentos disponibles")
         st.stop()
-
-    instrumentos_df = pd.DataFrame(instrumentos)
-    opciones = [
-        {"label": f"{row['ticker']} - {row['nombre']}", "id": row["id_instrumento"]}
-        for _, row in instrumentos_df[["id_instrumento", "ticker", "nombre"]].iterrows()
-    ]
-
-    busqueda = st.text_input("Buscar instrumento por ticker o nombre")
-    opciones_filtradas = [
-        opcion for opcion in opciones
-        if busqueda.lower() in opcion["label"].lower()
-    ]
-
-    if not opciones_filtradas:
-        st.info("No hay resultados para esa búsqueda")
-        st.stop()
-
-    labels = [opcion["label"] for opcion in opciones_filtradas]
-    seleccion = st.selectbox("Selecciona un instrumento", labels)
-    selected_option = next(opcion for opcion in opciones_filtradas if opcion["label"] == seleccion)
-    instrument_id = selected_option["id"]
-
+    
+    df_inst = pd.DataFrame(instrumentos)
+    opciones = [f"{row['ticker']} - {row['nombre']}" for _, row in df_inst[["ticker", "nombre"]].iterrows()]
+    
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        seleccion = st.selectbox("Selecciona un instrumento", opciones)
+    
+    with col2:
+        if st.button("Actualizar gráfica"):
+            st.cache_data.clear()
+            st.rerun()
+    
+    ticker = seleccion.split(" - ")[0]
+    instrumento = df_inst[df_inst["ticker"] == ticker].iloc[0]
+    instrument_id = instrumento["id_instrumento"]
+    
     try:
         cotizaciones = api_request(f"/instrumentos/{instrument_id}/cotizaciones")
-    except Exception as exc:
-        st.error(str(exc))
-        st.stop()
-
-    if cotizaciones:
-        df = pd.DataFrame(cotizaciones)
-        df["fecha"] = pd.to_datetime(df["fecha"])
-        fig = go.Figure(
-            data=[
-                go.Candlestick(
-                    x=df["fecha"],
-                    open=df["precio_apertura"],
-                    high=df["precio_maximo"],
-                    low=df["precio_minimo"],
-                    close=df["precio_cierre"],
-                    name=seleccion,
-                )
-            ]
-        )
-        fig.update_layout(
-            xaxis_rangeslider_visible=False,
-            template="plotly_dark",
-            xaxis_title="Fecha",
-            yaxis_title="Precio",
-            margin=dict(l=20, r=20, t=40, b=20),
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("No hay cotizaciones disponibles para este instrumento")
-
-    st.subheader("Watchlist")
-    for ticker in ["AAPL", "MSFT", "NVDA"]:
-        st.checkbox(ticker)
-
-elif menu == "Trading":
-    st.header("Trading")
-    token, cliente_id, account_id = ensure_session_context()
-    if not token or cliente_id is None:
-        st.warning("Inicia sesión para operar")
-        st.stop()
-
-    with st.form("orden"):
-        ticker = st.text_input("Ticker")
-        tipo = st.selectbox("Tipo de orden", ["COMPRA", "VENTA"])
-        cantidad = st.number_input("Cantidad", min_value=1, step=1)
-        precio = st.number_input("Precio límite", min_value=0.0, step=1.0)
-        submitted = st.form_submit_button("Confirmar orden")
-        if submitted:
-            try:
-                api_request(
-                    "/ordenes",
-                    method="post",
-                    token=token,
-                    json_body={
-                        "id_cuenta": account_id,
-                        "ticker": ticker,
-                        "tipo_orden": tipo,
-                        "cantidad": int(cantidad),
-                        "precio_limite": float(precio),
-                    },
-                )
-                st.success("Orden enviada")
-            except Exception as exc:
-                st.error(str(exc))
-
-    st.subheader("Historial de órdenes")
-    try:
-        ordenes = api_request(f"/cuentas/{account_id}/ordenes", token=token)
-        if ordenes:
-            st.dataframe(pd.DataFrame(ordenes), use_container_width=True)
+        
+        if cotizaciones and len(cotizaciones) > 0:
+            df = pd.DataFrame(cotizaciones)
+            df["fecha"] = pd.to_datetime(df["fecha"])
+            df = df.sort_values("fecha")
+            
+            fig = go.Figure(
+                data=[
+                    go.Candlestick(
+                        x=df["fecha"],
+                        open=df["precio_apertura"],
+                        high=df["precio_maximo"],
+                        low=df["precio_minimo"],
+                        close=df["precio_cierre"],
+                        name=seleccion,
+                    )
+                ]
+            )
+            fig.update_layout(
+                xaxis_rangeslider_visible=False,
+                template="plotly_dark",
+                xaxis_title="Fecha",
+                yaxis_title="Precio",
+                height=500,
+                margin=dict(l=20, r=20, t=40, b=20),
+            )
+            st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("No hay órdenes")
+            st.info("No hay cotizaciones disponibles para este instrumento")
     except Exception as exc:
-        st.error(str(exc))
+        st.error(f"Error al cargar cotizaciones: {str(exc)}")
 
-elif menu == "Portafolio":
-    st.header("Portafolio")
-    token, cliente_id, account_id = ensure_session_context()
-    if not token or cliente_id is None:
-        st.warning("Inicia sesión para ver el portafolio")
+elif page == "Trading":
+    st.header("Trading - Crear orden")
+    
+    if not account_id:
+        st.warning("No se pudo cargar la cuenta")
         st.stop()
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        with st.form("nueva_orden"):
+            ticker = st.text_input("Ticker (ej: AAPL)")
+            tipo_orden = st.selectbox("Tipo de orden", ["COMPRA", "VENTA"])
+            cantidad = st.number_input("Cantidad", min_value=1, step=1)
+            precio_limite = st.number_input("Precio límite", min_value=0.0, step=0.01)
+            submitted = st.form_submit_button("Crear orden")
+            
+            if submitted:
+                try:
+                    result = api_request(
+                        f"/cuentas/{account_id}/ordenes",
+                        method="post",
+                        token=token,
+                        json_body={
+                            "ticker": ticker,
+                            "tipo_orden": tipo_orden,
+                            "cantidad": cantidad,
+                            "precio_limite": precio_limite,
+                        },
+                    )
+                    st.success(f"Orden creada: {result}")
+                except Exception as exc:
+                    st.error(f"Error: {str(exc)}")
 
+elif page == "Portafolio":
+    st.header("Portafolio - Mis posiciones")
+    
+    if not account_id:
+        st.warning("No se pudo cargar la cuenta")
+        st.stop()
+    
     try:
         portafolio = api_request(f"/clientes/{cliente_id}/portafolio", token=token)
         if portafolio:
-            st.dataframe(pd.DataFrame(portafolio), use_container_width=True)
+            df = pd.DataFrame(portafolio)
+            st.dataframe(df, use_container_width=True)
         else:
-            st.info("No hay posiciones")
+            st.info("No hay posiciones en el portafolio")
     except Exception as exc:
         st.error(str(exc))
 
-elif menu == "Movimientos":
-    st.header("Movimientos")
-    token, cliente_id, account_id = ensure_session_context()
-    if not token or cliente_id is None:
-        st.warning("Inicia sesión para ver movimientos")
+elif page == "Movimientos":
+    st.header("Movimientos - Depósitos y retiros")
+    
+    if not account_id:
+        st.warning("No se pudo cargar la cuenta")
         st.stop()
-
-    tab1, tab2 = st.tabs(["Depósitos/Retiros", "Historial de transacciones"])
-    with tab1:
-        with st.form("movimiento"):
-            tipo = st.selectbox("Tipo", ["Depósito", "Retiro"])
-            monto = st.number_input("Monto", min_value=0.0, step=10.0)
-            if st.form_submit_button("Procesar"):
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        with st.form("deposito"):
+            st.subheader("💳 Depósito")
+            monto_dep = st.number_input("Monto a depositar", min_value=0.01, step=0.01, key="monto_dep")
+            submit_dep = st.form_submit_button("Depositar")
+            
+            if submit_dep:
                 try:
-                    endpoint = "/cuentas/{id}/depositos" if tipo == "Depósito" else "/cuentas/{id}/retiros"
-                    api_request(
-                        endpoint.format(id=account_id),
+                    result = api_request(
+                        f"/cuentas/{account_id}/deposito",
                         method="post",
                         token=token,
-                        json_body={"monto": float(monto)},
+                        json_body={"monto": float(monto_dep)},
                     )
-                    st.success(f"{tipo} procesado correctamente")
+                    st.success(f"Depósito exitoso: ${monto_dep:.2f}")
                 except Exception as exc:
-                    st.error(str(exc))
-    with tab2:
-        try:
-            movimientos = api_request(f"/cuentas/{account_id}/movimientos", token=token)
-            if movimientos:
-                st.dataframe(pd.DataFrame(movimientos), use_container_width=True)
-            else:
-                st.info("No hay movimientos")
-        except Exception as exc:
-            st.error(str(exc))
+                    st.error(f"Error: {str(exc)}")
+    
+    with col2:
+        with st.form("retiro"):
+            st.subheader("🏦 Retiro")
+            monto_ret = st.number_input("Monto a retirar", min_value=0.01, step=0.01, key="monto_ret")
+            submit_ret = st.form_submit_button("Retirar")
+            
+            if submit_ret:
+                try:
+                    result = api_request(
+                        f"/cuentas/{account_id}/retiro",
+                        method="post",
+                        token=token,
+                        json_body={"monto": float(monto_ret)},
+                    )
+                    st.success(f"Retiro exitoso: ${monto_ret:.2f}")
+                except Exception as exc:
+                    st.error(f"Error: {str(exc)}")
 
-elif menu == "Notificaciones":
+elif page == "Notificaciones":
     st.header("Notificaciones")
-    if st.session_state.get("token"):
-        st.success("Orden ejecutada correctamente")
-        st.info("Orden parcial ejecutada: 5/10 acciones")
-        st.warning("Alerta: saldo bajo en la cuenta")
-    else:
-        st.info("Inicia sesión para recibir notificaciones")
+    st.info("📢 Módulo de notificaciones en construcción")
 
-elif menu == "Admin/Backoffice":
+elif page == "Admin":
     st.header("Admin/Backoffice")
-    try:
-        riesgo = api_request("/admin/reporte-riesgo")
-        if riesgo:
-            st.dataframe(pd.DataFrame(riesgo), use_container_width=True)
-        else:
-            st.info("No hay datos de riesgo")
-    except Exception as exc:
-        st.error(str(exc))
+    st.info("⚙️ Módulo administrativo en construcción")
