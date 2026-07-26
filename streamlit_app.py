@@ -79,13 +79,25 @@ st.markdown(
         border-right: 1px solid var(--bh-border);
     }
     section[data-testid="stSidebar"] .block-container {
-        padding: 0.6rem 1.1rem 1rem;
+        padding: 0.9rem 1.1rem 1rem;
     }
-    section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
+    section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"],
+    section[data-testid="stSidebar"] [class*="stVerticalBlock"] {
         gap: 0.35rem !important;
     }
-    section[data-testid="stSidebar"] div[data-testid="stElementContainer"] {
+    section[data-testid="stSidebar"] div[data-testid="stElementContainer"],
+    section[data-testid="stSidebar"] [data-testid*="ElementContainer"],
+    section[data-testid="stSidebar"] .element-container {
         margin-bottom: 0 !important;
+    }
+    /* Compactar específicamente los contenedores de los botones de módulos (por su key) */
+    section[data-testid="stSidebar"] div[class*="st-key-nav_"] {
+        margin-bottom: 0 !important;
+        margin-top: 0 !important;
+    }
+    section[data-testid="stSidebar"] div[data-testid="stMarkdownContainer"],
+    section[data-testid="stSidebar"] div[data-testid="stMarkdown"] {
+        margin: 0 !important;
     }
     section[data-testid="stSidebar"] .stButton>button {
         width: 100%;
@@ -111,14 +123,24 @@ st.markdown(
     section[data-testid="stSidebar"] .stButton>button:focus:not(:active) {
         color: var(--bh-text-main) !important;
     }
-
-    /* Botón de la página activa */
-    .bh-nav-active button {
-        background: rgba(30, 125, 67, 0.22) !important;
-        color: var(--bh-green-bright) !important;
-        border: 1px solid var(--bh-green-500) !important;
-        border-left: 3px solid var(--bh-green-bright) !important;
+    section[data-testid="stSidebar"] .stButton>button > div,
+    section[data-testid="stSidebar"] .stButton>button span {
+        justify-content: flex-start !important;
+        text-align: left !important;
+        width: 100%;
     }
+
+    /* Botones de módulos (Dashboard, Mercado, Trading, etc.) con fuente más grande.
+       El resaltado del módulo activo se inyecta dinámicamente más abajo,
+       en el bloque de Python, vía la clase st-key-nav_<pagina_actual>. */
+    section[data-testid="stSidebar"] div[class*="st-key-nav_"] button,
+    section[data-testid="stSidebar"] div[class*="st-key-nav_"] button p,
+    section[data-testid="stSidebar"] div[class*="st-key-nav_"] button span,
+    section[data-testid="stSidebar"] div[class*="st-key-nav_"] button div {
+        font-family: 'IBM Plex Serif', Georgia, serif !important;
+        font-size: 1.1rem !important;
+    }
+
 
     /* -------------------- Botones generales (main area) -------------------- */
     .stButton>button, .stFormSubmitButton>button {
@@ -222,17 +244,19 @@ st.markdown(
     .bh-brand-title {
         font-family: 'IBM Plex Serif', Georgia, serif;
         font-weight: 700;
-        font-size: 1.55rem;
+        font-size: 2.25rem;
         color: var(--bh-text-main);
         letter-spacing: 0.3px;
-        margin-bottom: 0;
+        margin-top: 0;
+        margin-bottom: 2px;
+        line-height: 1.2;
     }
     .bh-brand-sub {
         color: var(--bh-text-muted);
         font-size: 0.78rem;
         text-transform: uppercase;
-        letter-spacing: 1.4px;
-        margin-top: -2px;
+        letter-spacing: 3px;
+        margin-top: 0;
     }
     .bh-divider-gold {
         height: 1px;
@@ -257,11 +281,14 @@ st.markdown(
     }
     .bh-sidebar-label {
         color: var(--bh-text-muted);
-        font-size: 0.72rem;
+        font-size: 0.8rem;
         font-weight: 700;
         text-transform: uppercase;
         letter-spacing: 1px;
-        margin: 0.6rem 0 0.3rem 0;
+        margin: 0.1rem 0 0.1rem 0;
+    }
+    .bh-session-pill {
+        line-height: 1.2;
     }
 
     /* Ocultar el header nativo de Streamlit para un look más "app" */
@@ -354,14 +381,26 @@ with st.sidebar:
 
     st.markdown('<div class="bh-sidebar-label">MÓDULOS</div>', unsafe_allow_html=True)
 
+    # CSS dinámico: resalta el botón del módulo activo usando la clase
+    # st-key-nav_<nombre> que Streamlit genera solo a partir del `key`.
+    # (Evita envolver cada botón en divs de markdown, que triplicaban
+    # la cantidad de contenedores y agrandaban el espaciado vertical.)
+    st.markdown(
+        f"""<style>
+        div[class*="st-key-nav_{st.session_state.page}"] button {{
+            background: rgba(30, 125, 67, 0.22) !important;
+            color: var(--bh-green-bright) !important;
+            border: 1px solid var(--bh-green-500) !important;
+            border-left: 3px solid var(--bh-green-bright) !important;
+        }}
+        </style>""",
+        unsafe_allow_html=True,
+    )
+
     for nombre, icono in MODULOS:
-        es_activo = st.session_state.page == nombre
-        wrapper_class = "bh-nav-active" if es_activo else ""
-        st.markdown(f'<div class="{wrapper_class}">', unsafe_allow_html=True)
         if st.button(f"{icono}  {nombre}", key=f"nav_{nombre}", use_container_width=True):
             st.session_state.page = nombre
             st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="bh-divider-gold"></div>', unsafe_allow_html=True)
 
