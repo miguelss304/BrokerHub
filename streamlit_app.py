@@ -79,7 +79,13 @@ st.markdown(
         border-right: 1px solid var(--bh-border);
     }
     section[data-testid="stSidebar"] .block-container {
-        padding: 1.6rem 1.1rem 2rem;
+        padding: 0.6rem 1.1rem 1rem;
+    }
+    section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] {
+        gap: 0.35rem !important;
+    }
+    section[data-testid="stSidebar"] div[data-testid="stElementContainer"] {
+        margin-bottom: 0 !important;
     }
     section[data-testid="stSidebar"] .stButton>button {
         width: 100%;
@@ -89,11 +95,12 @@ st.markdown(
         color: var(--bh-text-muted) !important;
         border: 1px solid transparent !important;
         border-radius: 6px !important;
-        padding: 0.6rem 0.9rem !important;
+        padding: 0.4rem 0.8rem !important;
         font-weight: 600 !important;
-        font-size: 0.92rem !important;
+        font-size: 0.88rem !important;
         letter-spacing: 0.2px;
-        margin-bottom: 0.15rem;
+        margin-bottom: 0 !important;
+        line-height: 1.3;
         transition: all 0.12s ease-in-out;
     }
     section[data-testid="stSidebar"] .stButton>button:hover {
@@ -231,7 +238,7 @@ st.markdown(
         height: 1px;
         background: linear-gradient(90deg, var(--bh-green-500), var(--bh-gold), var(--bh-green-500));
         opacity: 0.55;
-        margin: 0.35rem 0 1.1rem 0;
+        margin: 0.25rem 0 0.5rem 0;
     }
     .bh-session-pill {
         display: inline-block;
@@ -247,6 +254,14 @@ st.markdown(
         border-color: var(--bh-green-500);
         color: var(--bh-green-bright);
         background: rgba(47, 174, 93, 0.08);
+    }
+    .bh-sidebar-label {
+        color: var(--bh-text-muted);
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin: 0.6rem 0 0.3rem 0;
     }
 
     /* Ocultar el header nativo de Streamlit para un look más "app" */
@@ -337,8 +352,7 @@ with st.sidebar:
     else:
         st.markdown(f'<span class="bh-session-pill">○ SIN AUTENTICAR</span>', unsafe_allow_html=True)
 
-    st.write("")
-    st.markdown("**MÓDULOS**")
+    st.markdown('<div class="bh-sidebar-label">MÓDULOS</div>', unsafe_allow_html=True)
 
     for nombre, icono in MODULOS:
         es_activo = st.session_state.page == nombre
@@ -349,7 +363,6 @@ with st.sidebar:
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-    st.write("")
     st.markdown('<div class="bh-divider-gold"></div>', unsafe_allow_html=True)
 
     col_perfil, col_logout = st.columns(2)
