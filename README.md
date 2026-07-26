@@ -1,8 +1,9 @@
-# BrokerHub — Proyecto Final Bases de Datos
+﻿# BrokerHub — Proyecto Final Bases de Datos
 
-Plataforma de corretaje de inversiones (broker bursátil), enfocada en acciones
-de mercados de Estados Unidos (NYSE/NASDAQ), con datos reales de Finnhub y
-yfinance, y datos sintéticos generados con Faker.
+Plataforma de corretaje de inversiones desarrollada en Python con FastAPI,
+MySQL, datos reales de Finnhub/yfinance y datos sintéticos generados con Faker.
+El proyecto está centrado en acciones de EEUU (NYSE/NASDAQ), streaming de
+precios en vivo y ejecución automática de órdenes.
 
 ## Estructura del proyecto
 
@@ -13,22 +14,26 @@ BrokerHub/
 ├── .gitignore
 ├── requirements.txt
 │
-├── broker_esquema_mysql.sql  # DDL: crea las 12 tablas del modelo
+├── broker_esquema_mysql.sql      # DDL: crea las 12 tablas del modelo
+├── trigger_procs_func.sql        # Triggers, procedimientos y funciones almacenadas
 │
-├── conexion_db.py                # conexión reutilizable a MySQL + reconexión automática
-├── cliente_finnhub.py            # funciones REST a Finnhub + histórico vía yfinance
+├── auth.py                       # seguridad JWT/Bcrypt
+├── conexion_db.py                # conexión reutilizable y reconexión a MySQL
+├── utils_mercado.py              # lógica compartida de horario de mercado
+├── cliente_finnhub.py            # consumo de Finnhub y yfinance
 │
-├── carga_inicial.py              # puebla Emisor, Instrumento, Categoría, Cotización, Listado
-├── actualizar_historico.py       # trae los días nuevos que falten en Cotizacion_Historica
-├── generador_faker.py            # genera Cliente y Cuenta_Inversion sintéticos
-├── simulador_ordenes.py          # genera Orden, Transaccion_Ejecutada, Posicion (histórico simulado)
-├── streaming.py                  # WebSocket en vivo -> Precio_Tiempo_Real
-├── ejecutor_ordenes.py           # motor: ejecuta Órdenes PENDIENTE contra el precio en vivo
-├── colocar_orden.py              # utilidad para colocar una Orden PENDIENTE de prueba
-├── main.py                       # API (FastAPI): expone el sistema por HTTP
-├── Procfile                      # comando de arranque para desplegar la API en Railway
+├── carga_inicial.py              # puebla mercados, emisores, instrumentos y cotizaciones
+├── actualizar_historico.py       # actualiza Cotizacion_Historica periódicamente
+├── generador_faker.py            # genera clientes, credenciales y cuentas sintéticas
+├── simulador_ordenes.py          # genera historial de órdenes ejecutadas
+├── streaming.py                  # WebSocket en vivo a Finnhub
+├── ejecutor_ordenes.py           # motor de ejecución de órdenes PENDIENTES
+├── colocar_orden.py              # utilidad para colocar una orden de prueba
+├── main.py                       # API REST con FastAPI
+├── streamlit_app.py              # UI de ejemplo basada en la API
+├── reiniciar_todo.py             # resetea y repuebla la base de datos
 │
-└── exploracion_finnhub.ipynb     # notebook para explorar/visualizar datos con pandas
+└── Procfile                      # comando de arranque para Railway
 ```
 
 ## 1. Instalación
@@ -37,81 +42,75 @@ BrokerHub/
 pip install -r requirements.txt
 ```
 
-Los comandos de este README usan `py` (launcher de Windows). Si tu instalación
-usa `python`, reemplázalo en cada comando.
+> En Windows el README original usa `py`; si tu instalación no tiene `py`,
+> reemplaza `py` por `python` en los comandos.
 
 ## 2. Configurar credenciales
 
-Crea`.env` y completa con los valores reales:
+Crea un archivo `.env` con los valores reales:
 
-```
+```env
 MYSQLHOST=tokaido.proxy.rlwy.net
 MYSQLPORT=45849
 MYSQLUSER=root
 MYSQLPASSWORD=<password de Railway>
 MYSQLDATABASE=railway
-
 FINNHUB_API_KEY=<api key de Finnhub>
+JWT_SECRET_KEY=<secret para tokens JWT>
 ```
 
-Las credenciales de Railway están en el servicio de MySQL → pestaña **Variables**
-(usuario/password) y pestaña **Networking → Public Networking** (host/puerto).
-La API key de Finnhub se obtiene gratis en [finnhub.io](https://finnhub.io).
+Las credenciales de Railway se obtienen desde el servicio de MySQL:
+- **Variables**: usuario/password
+- **Networking → Public Networking**: host/puerto
+
+La API key de Finnhub se obtiene en [finnhub.io](https://finnhub.io).
 
 ## 3. Crear el esquema de la base de datos
 
-Abre `broker_esquema_mysql.sql` en MySQL Workbench (conectado a Railway)
-y ejecútalo completo. El script usa `USE railway;` (esa es la base de datos
-real en Railway; "BrokerHub" es solo el nombre del proyecto). Crea las 12
-tablas del modelo, empezando por borrar cualquier tabla existente con esos
-nombres (en el orden correcto por las llaves foráneas).
+Abre `broker_esquema_mysql.sql` en MySQL Workbench conectado a Railway y
+ ejecútalo completo. El script contiene `USE railway;` y crea las 12 tablas
+del modelo, eliminando tablas existentes en el orden correcto según las
+llaves foráneas.
 
 ## 4. Orden de ejecución de los scripts
 
-Cada script se puede volver a correr sin duplicar datos (usan "buscar o
-crear", `INSERT IGNORE` o `ON DUPLICATE KEY`):
+Cada script se puede volver a ejecutar sin duplicar datos gracias a
+"buscar o crear", `INSERT IGNORE` y `ON DUPLICATE KEY`.
 
 ```bash
-# 1. Datos reales de mercado: Emisor, Instrumento, Categoría, Cotización, Listado
+# 1. Carga inicial de mercado: emisores, instrumentos, listados y precios históricos
 py carga_inicial.py
 
-# 1.5. (Correr periódicamente, ej. una vez al día) Trae los días nuevos
-#      que falten en Cotizacion_Historica, sin repetir todo el histórico.
+# 1.5. Actualizar periódicamente el histórico sin repetir todo el dataset
 py actualizar_historico.py
 
-# 2. Clientes y cuentas sintéticas
+# 2. Generar clientes, credenciales y cuentas sintéticas
 py generador_faker.py
 
-# 3. Órdenes, transacciones y posiciones (usa los precios reales ya cargados)
-#    Quedan en estado EJECUTADA -- es la simulación del historial del proyecto.
+# 3. Simular órdenes ejecutadas y generar historial
 py simulador_ordenes.py
 
-# 4. Streaming en vivo (dejar corriendo durante la demo, en su propia terminal)
+# 4. Iniciar streaming en vivo de Finnhub
 py streaming.py
 
-# 5. Ejecutor de órdenes en tiempo real (dejar corriendo, en OTRA terminal)
-#    Revisa cada 5s las Órdenes PENDIENTE y las ejecuta si el precio en vivo
-#    (o el último cierre histórico como respaldo) cumple el precio_limite.
+# 5. Iniciar el motor de ejecución de órdenes en tiempo real
 py ejecutor_ordenes.py
 
-# 6. (Pruebas/demo) Coloca una Orden nueva en estado PENDIENTE, para ver
-#    cómo el ejecutor la resuelve en el siguiente ciclo.
+# 6. Probar el flujo colocando una orden PENDIENTE
 py colocar_orden.py
 
-# 7. API (en su propia terminal): expone todo por HTTP
+# 7. Levantar la API localmente
 uvicorn main:app --reload
 ```
 
-### Correr varios scripts a la vez (streaming + ejecutor)
+### Streaming y ejecutor en paralelo
 
-`streaming.py` y `ejecutor_ordenes.py` corren **al mismo tiempo, en terminales
-separadas**. En VS Code: `Terminal → New Terminal` (o el botón `+` del panel
-de terminal) para abrir una pestaña nueva por cada script, sin cerrar las
-anteriores.
+`streaming.py` y `ejecutor_ordenes.py` deben ejecutarse en terminales
+separadas. En VS Code, usa `Terminal → New Terminal` o el botón `+`.
 
-`streaming.py` solo recibe trades cuando el mercado de EE.UU. está abierto
-(lunes a viernes, 9:30 AM - 4:00 PM hora de Nueva York). Fuera de ese
-horario, el WebSocket queda conectado pero sin mensajes.
+`streaming.py` recibe datos solo durante el horario de mercado de EE.UU.:
+lunes a viernes, 9:30 AM - 4:00 PM hora de Nueva York. Fuera de ese
+término el WebSocket permanece conectado sin enviar trades.
 
 ## 5. Verificación rápida en MySQL Workbench
 
@@ -121,58 +120,59 @@ SELECT COUNT(*) FROM Instrumento_Financiero;
 SELECT COUNT(*) FROM Cotizacion_Historica;
 SELECT COUNT(*) FROM Orden;
 SELECT COUNT(*) FROM Posicion;
-SELECT COUNT(*) FROM Precio_Tiempo_Real;  -- solo tiene datos si streaming.py corrió en horario de mercado
+SELECT COUNT(*) FROM Precio_Tiempo_Real;  -- solo si streaming.py corrió en horario de mercado
 
--- Órdenes por estado
 SELECT estado, COUNT(*) FROM Orden GROUP BY estado;
 ```
 
-## Motor de ejecución de órdenes en tiempo real
+## 6. Motor de ejecución de órdenes en tiempo real
 
-`ejecutor_ordenes.py` hace que el sistema reaccione en vivo:
+`ejecutor_ordenes.py` procesa órdenes pendientes en ciclos de 5 segundos:
 
-1. Un cliente coloca una `Orden` (queda en estado `PENDIENTE`) — ver `colocar_orden.py`.
-2. `streaming.py` llena `Precio_Tiempo_Real` con datos reales de Finnhub.
-3. `ejecutor_ordenes.py` revisa cada 5 segundos las órdenes `PENDIENTE` y las
-   compara contra el último precio conocido de su instrumento:
-   - **COMPRA** se ejecuta si `precio_actual <= precio_limite`
-   - **VENTA** se ejecuta si `precio_actual >= precio_limite`
-   - Si no hay ningún precio en vivo (mercado cerrado), usa como respaldo el
-     último `precio_cierre` de `Cotizacion_Historica`.
-4. Al ejecutarse: crea la `Transaccion_Ejecutada`, actualiza
-   `saldo_disponible` de la cuenta, actualiza (o crea) la `Posicion` de esa
-   cuenta, y marca la `Orden` como `EJECUTADA`.
+1. Un cliente coloca una `Orden` en estado `PENDIENTE` (`colocar_orden.py` o `POST /ordenes`).
+2. `streaming.py` escribe ticks reales en `Precio_Tiempo_Real`.
+3. El ejecutor obtiene el último precio conocido de cada instrumento.
+4. Se ejecuta la orden si la condición se cumple:
+   - `COMPRA` si `precio_actual <= precio_limite`
+   - `VENTA` si `precio_actual >= precio_limite`
+5. Si no hay precio en vivo, usa el último `precio_cierre` de
+   `Cotizacion_Historica` como respaldo.
 
-`streaming.py` y `ejecutor_ordenes.py` están pensados para correr en paralelo
-de forma indefinida.
+Al ejecutarse, el sistema:
+- crea `Transaccion_Ejecutada`
+- actualiza `saldo_disponible` de la cuenta
+- actualiza o crea `Posicion`
+- marca la `Orden` como `EJECUTADA`
 
-## Consistencia del "precio actual" (horario de mercado)
+`streaming.py` y `ejecutor_ordenes.py` están diseñados para correr indefinidamente
+en paralelo.
 
-`main.py` (API) y `ejecutor_ordenes.py` usan la misma lógica para decidir
-qué es el "precio actual" de un instrumento:
+## 7. Consistencia del precio actual
 
-- Si el mercado está abierto (lunes-viernes, 9:30 AM - 4:00 PM hora de
-  Nueva York) **y** hay datos en `Precio_Tiempo_Real`, se usa el último trade.
-- Si el mercado está cerrado, o aún no ha llegado ningún dato en vivo, se usa
-  el último `precio_cierre` de `Cotizacion_Historica`.
+`main.py` y `ejecutor_ordenes.py` usan la misma regla de horario de mercado en
+`utils_mercado.py`:
 
-Por esto, `Cotizacion_Historica` debe mantenerse al día corriendo
-`actualizar_historico.py` periódicamente — si no, el respaldo fuera de
-horario queda desactualizado.
+- Si el mercado está abierto y hay datos en `Precio_Tiempo_Real`, se usa el
+  último trade.
+- Si el mercado está cerrado o no hay precio en vivo, se usa el último
+  `precio_cierre` de `Cotizacion_Historica`.
 
-## Notas sobre streaming.py (trades duplicados)
+Por eso es importante correr `actualizar_historico.py` periódicamente: el
+respaldo fuera de horario depende del cierre histórico.
 
-`Precio_Tiempo_Real` tiene como clave primaria `(id_instrumento, fecha_hora)`,
-con precisión de segundos. Si llegan dos trades del mismo instrumento en el
-mismo segundo, se usa `INSERT IGNORE` para descartar el duplicado sin tumbar
-el lote completo. El hilo escritor está envuelto en un manejo de errores
-general para que nunca muera en silencio.
+## 8. Notas sobre `streaming.py`
 
-## API (FastAPI)
+`Precio_Tiempo_Real` usa clave primaria `(id_instrumento, fecha_hora)` con
+precisión de segundos. Si llegan dos trades del mismo ticker en el mismo
+segundo, `INSERT IGNORE` descarta el duplicado sin fallar el lote.
 
-`main.py` expone el sistema por HTTP, para que cualquier interfaz (o
-herramienta como Postman) pueda consultar y operar sobre la base sin
-escribir SQL ni correr scripts a mano.
+El hilo de escritura está protegido con manejo de errores para que no muera
+silenciosamente.
+
+## 9. API (FastAPI)
+
+`main.py` expone la API REST del sistema. La mayoría de endpoints de cliente y
+cuenta requieren autenticación JWT.
 
 ### Cómo correrla
 
@@ -181,102 +181,117 @@ uvicorn main:app --reload
 ```
 
 Documentación interactiva:
-```
+
+```text
 http://127.0.0.1:8000/docs
 ```
 
-### Endpoints disponibles
+### Endpoints principales
 
-| Método | Ruta | Qué hace |
+| Método | Ruta | Descripción |
 |---|---|---|
-| GET | `/health` | Confirma que la API y la base de datos están activas |
+| GET | `/health` | Verifica que la API y la base de datos respondan |
+| POST | `/auth/registro` | Registra un cliente, crea credenciales y cuenta inicial |
+| POST | `/auth/login` | Autentica un usuario y devuelve token JWT |
 | GET | `/clientes` | Lista todos los clientes |
 | GET | `/clientes/{id_cliente}` | Datos de un cliente específico |
+| PUT | `/clientes/{id_cliente}` | Actualiza nombre, correo o perfil de riesgo |
 | GET | `/clientes/{id_cliente}/cuentas` | Cuentas de inversión de un cliente |
-| GET | `/clientes/{id_cliente}/portafolio` | Posiciones actuales, con precio actual y ganancia/pérdida no realizada |
+| GET | `/clientes/{id_cliente}/portafolio` | Posiciones actuales y P&L no realizado |
 | GET | `/clientes/{id_cliente}/ordenes` | Historial de órdenes de un cliente |
-| GET | `/instrumentos` | Lista todos los instrumentos (acciones) disponibles |
-| GET | `/instrumentos/{ticker}/precio-actual` | Último precio conocido (en vivo, o histórico como respaldo) |
-| GET | `/instrumentos/{ticker}/historico?dias=30` | Histórico diario de precios |
-| POST | `/ordenes` | Coloca una orden nueva (queda `PENDIENTE`) |
-| GET | `/ordenes/{id_orden}` | Detalle de una orden y sus transacciones |
-| DELETE | `/ordenes/{id_orden}` | Cancela una orden (solo si sigue `PENDIENTE`) |
+| GET | `/clientes/{id_cliente}/perfil-real` | Perfil real estimado según las posiciones |
+| POST | `/cuentas` | Abre una nueva cuenta de inversión |
+| GET | `/cuentas/{id_cuenta}/saldo` | Consulta saldo disponible |
+| POST | `/cuentas/{id_cuenta}/depositos` | Deposita fondos en la cuenta |
+| POST | `/cuentas/{id_cuenta}/retiros` | Retira fondos de la cuenta |
+| GET | `/cuentas/{id_cuenta}/ordenes` | Órdenes de una cuenta |
+| GET | `/cuentas/{id_cuenta}/posiciones` | Posiciones abiertas de una cuenta |
+| GET | `/cuentas/{id_cuenta}/valor-portafolio` | Valor de mercado del portafolio |
+| GET | `/cuentas/{id_cuenta}/rentabilidad` | Rentabilidad estimada del portafolio |
+| GET | `/cuentas/{id_cuenta}/movimientos` | Historial de movimientos |
+| GET | `/instrumentos` | Lista de instrumentos disponibles |
+| GET | `/instrumentos/{id_instrumento}` | Detalle de instrumento por ID |
+| GET | `/instrumentos/{id_instrumento}/cotizaciones` | Histórico filtrable por fechas |
+| GET | `/instrumentos/{id_instrumento}/precios-vivo` | Ticks de precio en vivo recientes |
+| GET | `/instrumentos/{ticker}/precio-actual` | Último precio conocido (vivo/histórico) |
+| GET | `/instrumentos/{ticker}/historico` | Histórico diario de un ticker |
+| POST | `/ordenes` | Coloca una orden en estado `PENDIENTE` |
+| GET | `/ordenes/{id_orden}` | Detalle de orden y sus transacciones |
+| DELETE | `/ordenes/{id_orden}` | Cancela una orden `PENDIENTE` |
 
 ### Notas de diseño
 
-- CORS habilitado (`allow_origins=["*"]`), para que cualquier interfaz pueda
-  consultarla desde el navegador sin bloqueos.
-- Los errores de conexión a MySQL se traducen a un `503` con mensaje claro,
-  en vez de un traceback de Python.
-- Validaciones relacionadas con `tipo_cliente` y `perfil_riesgo` quedan fuera
-  del `POST /ordenes` hasta que se defina la interfaz final.
+- CORS habilitado (`allow_origins=["*"]`).
+- Errores de conexión a MySQL devuelven `503` con mensaje claro.
+- Las validaciones de `tipo_cliente` y `perfil_riesgo` no bloquean aún `POST /ordenes`.
+- `POST /auth/login` actualiza `ultimo_acceso`, pero no falla si ese update fallara.
 
 ### Despliegue en Railway
 
-La API está desplegada en Railway (mismo proyecto que el servicio de MySQL),
-accesible públicamente.
-
-- El `Procfile` indica cómo arrancar la API:
-  ```
+- `Procfile`:
+  ```text
   web: uvicorn main:app --host 0.0.0.0 --port $PORT
   ```
-- Las variables de entorno (`MYSQLHOST`, `FINNHUB_API_KEY`, etc.) se
-  configuran en la pestaña **Variables** del servicio de la API en Railway.
-- El dominio público se genera en **Settings → Networking → Generate Domain**.
-- Para verificar que sigue viva: `<url-de-railway>/health` debe responder
-  `{"status": "ok", "database": "conectada"}`.
+- Variables de entorno en Railway: `MYSQLHOST`, `MYSQLPORT`, `MYSQLUSER`,
+  `MYSQLPASSWORD`, `MYSQLDATABASE`, `FINNHUB_API_KEY`, `JWT_SECRET_KEY`, etc.
+- Para verificarlo, llama a `<url-de-railway>/health`.
 
-`streaming.py` y `ejecutor_ordenes.py` corren localmente (no están
-desplegados en Railway); solo `main.py` (la API) vive en la nube.
+> Nota: `streaming.py` y `ejecutor_ordenes.py` se ejecutan localmente. Solo
+> `main.py` se despliega en Railway.
 
-## Funcionalidades futuras (fuera del alcance actual)
+## 10. UI de ejemplo con Streamlit
 
-- **Interfaz de usuario**: opción considerada, un dashboard con Streamlit
-  consumiendo los endpoints de `main.py`. Pendiente de decisión.
-- **Sugerencia por perfil de riesgo**: comparar `Cliente.perfil_riesgo`
-  contra `Categoria_Instrumento.nivel_riesgo` para mostrar una advertencia
-  al colocar una orden (no bloquear, solo sugerir).
-- Ejecución parcial de órdenes (`PARCIALMENTE_EJECUTADA`) — el ejecutor
-  actual solo resuelve órdenes completas (todo o nada).
+`streamlit_app.py` es una interfaz de ejemplo que consume la API.
+Por defecto usa `BROKERHUB_API_URL` para apuntar a la API desplegada o una URL
+local según la configuración.
 
-## Notas de diseño del modelo
+Para ejecutarla:
 
-- **Solo acciones**: el campo `tipo` de `Instrumento_Financiero` está
-  restringido a `'ACCION'` (no se manejan bonos ni ETFs).
-- **Solo mercados de EE.UU.** (NYSE, NASDAQ) — limitación por la cobertura
-  del plan gratuito de Finnhub para datos en tiempo real fuera de EE.UU.
-- **Jerarquía**: `Categoria_Instrumento.id_categoria_padre` forma un árbol
-  de 3 niveles (Acciones → Sector → Perfil de riesgo por capitalización).
-- **M:N con atributos propios**: `Posicion` (Cuenta_Inversion ↔
-  Instrumento_Financiero) y `Listado_Mercado` (Instrumento_Financiero ↔
-  Mercado_Bolsa). El portafolio de un cliente se consulta uniendo `Posicion`
-  con `Cuenta_Inversion`, ya que un cliente puede tener varias cuentas y
-  cada una lleva sus propias posiciones.
-- **Dimensión temporal**: `Cotizacion_Historica` (histórico diario) y
-  `Precio_Tiempo_Real` (streaming en vivo).
-- **Zona horaria**: la detección de horario de mercado usa `zoneinfo` con
-  `America/New_York`. En Windows requiere el paquete `tzdata` (incluido en
-  `requirements.txt`).
+```bash
+streamlit run streamlit_app.py
+```
 
-## Notas técnicas sobre la conexión a Railway (plan gratuito)
+## 11. Funcionalidades futuras (fuera del alcance actual)
 
-- Railway puede cerrar conexiones inactivas; todos los scripts implementan
-  reconexión automática (`conexion_db.asegurar_conexion` /
-  `conexion_db.reconectar_forzado`).
-- Para operaciones masivas (carga inicial, simulación de órdenes), se sigue
-  el patrón: leer todo primero → calcular en memoria → escribir en un solo
-  lote al final, para minimizar el tiempo que la conexión permanece abierta.
-- `streaming.py` usa un buffer en memoria + hilo separado que escribe a
-  MySQL cada 5 segundos en lote, en vez de insertar cada trade
-  individualmente.
-- `information_schema.TABLES.AUTO_INCREMENT` puede devolver `NULL` en una
-  tabla recién creada y vacía (antes de que MySQL actualice sus estadísticas
-  internas). `simulador_ordenes.py` asume `1` en ese caso.
+- Dashboard oficial con Streamlit.
+- Sugerencias de riesgo comparando `Cliente.perfil_riesgo` y
+  `Categoria_Instrumento.nivel_riesgo`.
+- Ejecución parcial de órdenes (`PARCIALMENTE_EJECUTADA`).
 
-## Trabajo en equipo (base de datos compartida en Railway)
+## 12. Notas de diseño del modelo
 
-- Antes de correr un script que modifique el esquema (`CREATE TABLE`,
-  `ALTER TABLE`, `DROP TABLE`), avisar al equipo.
-- Los `SELECT` se pueden correr en cualquier momento sin coordinación.
-- Las credenciales del `.env` se comparten por un canal privado del equipo,
-  nunca se suben a GitHub (`.env` está en `.gitignore`).
+- **Solo acciones**: `Instrumento_Financiero.tipo` es `'ACCION'`.
+- **Solo mercados de EE.UU.**: NYSE y NASDAQ.
+- **Jerarquía**: `Categoria_Instrumento.id_categoria_padre` forma un árbol de
+  3 niveles.
+- **M:N con atributos propios**: `Posicion` y `Listado_Mercado`.
+- **Dimensión temporal**: `Cotizacion_Historica` + `Precio_Tiempo_Real`.
+- **Zona horaria**: `America/New_York` con `zoneinfo` y `tzdata` en Windows.
+
+## 13. Notas técnicas para Railway
+
+- Railway puede cerrar conexiones inactivas; los scripts usan reconexión
+  automática en `conexion_db.py`.
+- Para cargas masivas se usa: leer primero → calcular en memoria → escribir
+  en lote.
+- `streaming.py` escribe en lote cada 5 segundos.
+- `simulador_ordenes.py` maneja el caso en que
+  `information_schema.TABLES.AUTO_INCREMENT` devuelve `NULL`.
+
+## 14. Reinicio completo de la base
+
+`reiniciar_todo.py` reinicia la base y ejecuta:
+- `broker_esquema_mysql.sql`
+- `trigger_procs_func.sql`
+- `carga_inicial.py`
+- `generador_faker.py`
+- `simulador_ordenes.py`
+
+> ADVERTENCIA: esto borra toda la base de datos `railway` y la recrea vacía.
+> Confirma con el equipo antes de ejecutarlo.
+
+## 15. Trabajo en equipo
+
+- Antes de correr scripts que modifiquen el esquema, avisa al equipo.
+- Los `SELECT` se pueden ejecutar en cualquier momento.
+- `.env` nunca se sube a GitHub; compártelo por canal privado.
