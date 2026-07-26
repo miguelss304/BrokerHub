@@ -61,14 +61,15 @@ def init_session_state():
 
 init_session_state()
 
+
 # ============================================================================
 # NAVEGACIÓN - BOTONES ESTÉTICOS
 # ============================================================================
 
 st.markdown("# 🏦 BrokerHub")
 
-token = st.session_state.get("token")
-cliente_id = st.session_state.get("cliente_id")
+token = st.session_state.token
+cliente_id = st.session_state.cliente_id
 
 # Barra de navegación
 col_nav = st.columns(8)
