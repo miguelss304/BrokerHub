@@ -10,7 +10,8 @@ try:
 except ImportError:
     TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA"]
 
-API_BASE_URL = os.getenv("BROKERHUB_API_URL", "http://127.0.0.1:8000").rstrip("/")
+API_BASE_URL = os.getenv("BROKERHUB_API_URL") or "https://brokerhub-api-production.up.railway.app"
+API_BASE_URL = API_BASE_URL.rstrip("/")
 
 # Debug: muestra qué URL está usando
 import sys
