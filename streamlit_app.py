@@ -145,7 +145,7 @@ st.markdown(
     section[data-testid="stSidebar"] div[class*="st-key-nav_"] button span,
     section[data-testid="stSidebar"] div[class*="st-key-nav_"] button div {
         font-family: 'IBM Plex Serif', Georgia, serif !important;
-        font-size: 1.4rem !important;
+        font-size: 1.2rem !important;
     }
 
 
@@ -368,7 +368,6 @@ cliente_id = st.session_state.cliente_id
 MODULOS = [
     ("Dashboard", "📊"),
     ("Mercado", "📈"),
-    ("Trading", "⚡"),
     ("Portafolio", "💼"),
     ("Movimientos", "🏦"),
     ("Notificaciones", "🔔"),
@@ -608,46 +607,7 @@ elif page == "Mercado":
     instrument_id = instrumento["id_instrumento"]
 
     # ------------------------------------------------------------------
-    # Gráfica histórica: serie de línea, rango extenso (precio de cierre)
-    # ------------------------------------------------------------------
-    st.subheader("Histórico")
-    try:
-        cotizaciones = api_request(f"/instrumentos/{instrument_id}/cotizaciones")
-
-        if cotizaciones:
-            df_hist = pd.DataFrame(cotizaciones)
-            df_hist["fecha"] = pd.to_datetime(df_hist["fecha"])
-            df_hist["precio_cierre"] = pd.to_numeric(df_hist["precio_cierre"], errors="coerce")
-            df_hist = df_hist.sort_values("fecha")
-
-            import plotly.express as px
-            fig_hist = px.line(
-                df_hist,
-                x="fecha",
-                y="precio_cierre",
-                title=None,
-            )
-            fig_hist.update_traces(line=dict(color="#2fae5d", width=2))
-            fig_hist.update_layout(
-                template="plotly_dark",
-                paper_bgcolor="#101d15",
-                plot_bgcolor="#101d15",
-                font=dict(family="IBM Plex Mono, monospace", color="#e7f3ea"),
-                xaxis_title="Fecha",
-                yaxis_title="Precio de cierre",
-                height=400,
-                margin=dict(l=20, r=20, t=30, b=20),
-            )
-            fig_hist.update_xaxes(gridcolor="#23402c")
-            fig_hist.update_yaxes(gridcolor="#23402c")
-            st.plotly_chart(fig_hist, use_container_width=True, key="chart_historico_v2_express")
-        else:
-            st.info("No hay cotizaciones históricas cargadas para este instrumento todavía.")
-    except Exception as exc:
-        st.error(f"Error al cargar histórico: {exc}")
-
-    # ------------------------------------------------------------------
-    # Gráfica en vivo: velas, ventana corta (ticks de Precio_Tiempo_Real)
+    # 1) Gráfica en vivo: velas, ventana corta (ticks de Precio_Tiempo_Real)
     # ------------------------------------------------------------------
     st.subheader("En vivo (velas)")
 
@@ -716,23 +676,39 @@ elif page == "Mercado":
     except Exception as exc:
         st.error(f"Error al cargar precios en vivo: {exc}")
 
-elif page == "Trading":
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # 2) Zona de ejecución de orden: comprar (verde) / vender (rojo)
+    # ------------------------------------------------------------------
+    st.subheader("Ejecutar orden")
+    col1, col2, col3 = st.columns(3)
+
+    try:
+        precio_real = api_request(f"/instrumentos/{ticker}/precio-actual")
+        col1.metric("Precio Actual", f"${precio_real.get('precio', 0):.2f}")
+    except Exception as exc:
+        col1.error("Error al cargar precio")
+        
     if not account_id:
         st.warning("No se pudo cargar la cuenta")
-        st.stop()
-
-    col1, col2 = st.columns(2)
-
-    with col1:
+    else:
         with st.form("nueva_orden"):
-            st.markdown("**Nueva orden**")
-            ticker = st.text_input("Ticker (ej: AAPL)")
-            tipo_orden = st.selectbox("Tipo de orden", ["COMPRA", "VENTA"])
-            cantidad = st.number_input("Cantidad", min_value=1, step=1)
-            precio_limite = st.number_input("Precio límite", min_value=0.0, step=0.01)
-            submitted = st.form_submit_button("Crear orden", use_container_width=True)
+            st.markdown(f"**{ticker}** — {instrumento['nombre']}")
+            col_cant, col_precio = st.columns(2)
+            with col_cant:
+                cantidad = st.number_input("Cantidad", min_value=1, step=1)
+            with col_precio:
+                precio_limite = st.number_input("Precio límite", min_value=0.0, step=0.01)
 
-            if submitted:
+            col_compra, col_venta = st.columns(2)
+            with col_compra:
+                click_compra = st.form_submit_button("🟢 COMPRAR", use_container_width=True, type="primary")
+            with col_venta:
+                click_venta = st.form_submit_button("🔴 VENDER", use_container_width=True)
+
+            if click_compra or click_venta:
+                tipo_orden = "COMPRA" if click_compra else "VENTA"
                 try:
                     result = api_request(
                         "/ordenes",
@@ -746,9 +722,50 @@ elif page == "Trading":
                             "precio_limite": precio_limite,
                         },
                     )
-                    st.success(f"Orden creada: {result}")
+                    st.success(f"Orden de {tipo_orden.lower()} creada: {result}")
                 except Exception as exc:
                     st.error(f"Error: {str(exc)}")
+
+    st.divider()
+
+    # ------------------------------------------------------------------
+    # 3) Gráfica histórica: serie de línea, rango extenso (precio de cierre)
+    # ------------------------------------------------------------------
+    st.subheader("Histórico")
+    try:
+        cotizaciones = api_request(f"/instrumentos/{instrument_id}/cotizaciones")
+
+        if cotizaciones:
+            df_hist = pd.DataFrame(cotizaciones)
+            df_hist["fecha"] = pd.to_datetime(df_hist["fecha"])
+            df_hist["precio_cierre"] = pd.to_numeric(df_hist["precio_cierre"], errors="coerce")
+            df_hist = df_hist.sort_values("fecha")
+
+            import plotly.express as px
+            fig_hist = px.line(
+                df_hist,
+                x="fecha",
+                y="precio_cierre",
+                title=None,
+            )
+            fig_hist.update_traces(line=dict(color="#2fae5d", width=2))
+            fig_hist.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="#101d15",
+                plot_bgcolor="#101d15",
+                font=dict(family="IBM Plex Mono, monospace", color="#e7f3ea"),
+                xaxis_title="Fecha",
+                yaxis_title="Precio de cierre",
+                height=400,
+                margin=dict(l=20, r=20, t=30, b=20),
+            )
+            fig_hist.update_xaxes(gridcolor="#23402c")
+            fig_hist.update_yaxes(gridcolor="#23402c")
+            st.plotly_chart(fig_hist, use_container_width=True, key="chart_historico_v2_express")
+        else:
+            st.info("No hay cotizaciones históricas cargadas para este instrumento todavía.")
+    except Exception as exc:
+        st.error(f"Error al cargar histórico: {exc}")
 
 elif page == "Portafolio":
     if not account_id:
