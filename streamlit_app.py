@@ -26,9 +26,16 @@ API_BASE_URL = API_BASE_URL.rstrip("/")
 
 st.markdown(
     """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&family=Source+Sans+Pro:wght@400;500;600;700&display=swap');
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Serif:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&family=Source+Sans+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+    """,
+    unsafe_allow_html=True,
+)
 
+st.markdown(
+    """
+    <style>
     :root {
         --bh-bg-0: #0a120d;
         --bh-bg-1: #0e1a13;
@@ -138,7 +145,7 @@ st.markdown(
     section[data-testid="stSidebar"] div[class*="st-key-nav_"] button span,
     section[data-testid="stSidebar"] div[class*="st-key-nav_"] button div {
         font-family: 'IBM Plex Serif', Georgia, serif !important;
-        font-size: 1.1rem !important;
+        font-size: 1.4rem !important;
     }
 
 
