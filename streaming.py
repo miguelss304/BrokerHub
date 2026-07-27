@@ -126,7 +126,7 @@ def on_message(ws, mensaje):
         if id_instrumento is None:
             continue  # llegó un ticker que no está en nuestra base
 
-        fecha_hora = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp_ms / 1000))
+        fecha_hora = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(timestamp_ms / 1000))
 
         with buffer_lock:
             buffer_trades.append((id_instrumento, precio, volumen, fecha_hora))
