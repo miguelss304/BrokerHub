@@ -236,7 +236,7 @@ def escribir_ejecuciones(cursor, ejecuciones, saldos_delta, posiciones_delta):
             "ORDEN",
             f"Orden #{ejecucion['id_orden']} ejecutada",
             f"Tu orden #{ejecucion['id_orden']} se ejecutó por {ejecucion['cantidad']} unidades a {ejecucion['precio_ejecucion']:.2f}. Comisión: ${ejecucion['comision']:.2f}.",
-            conexion=cursor.connection,
+            conexion=cursor._connection,
             cursor=cursor,
             commit=False,
         )
