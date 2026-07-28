@@ -56,6 +56,16 @@ def leer_datos_base():
 # ------------------------------------------------------------------
 # FASE 2: CÁLCULO EN MEMORIA (nada de base de datos aquí)
 # ------------------------------------------------------------------
+def _fecha_hora_valida(fecha_orden):
+    if fecha_orden.year < 1970:
+        dia = fecha_orden.day
+        if fecha_orden.month == 2 and dia == 29:
+            dia = 28
+        fecha_orden = fecha_orden.replace(year=1970, day=dia)
+
+    return datetime.combine(fecha_orden, datetime.min.time()) + timedelta(
+        hours=random.randint(9, 15), minutes=random.randint(0, 59)
+    )
 
 def simular_ordenes(cuentas, instrumentos, precios_por_instrumento):
     """Devuelve listas listas para insertar: ordenes, transacciones,
@@ -107,9 +117,7 @@ def simular_ordenes(cuentas, instrumentos, precios_por_instrumento):
                     continue  # no tiene suficientes unidades, se descarta
                 saldos_finales[id_cuenta] += (valor_total - comision)
 
-            fecha_hora = datetime.combine(fecha_orden, datetime.min.time()) + timedelta(
-                hours=random.randint(9, 15), minutes=random.randint(0, 59)
-            )
+            fecha_hora = _fecha_hora_valida(fecha_orden)
 
             indice_orden = len(ordenes_a_insertar)
             ordenes_a_insertar.append(
