@@ -1423,6 +1423,71 @@ ADMIN_CONSULTAS_BATERIA: Dict[str, dict] = {
                   ORDER BY patrimonio_invertido DESC
                   LIMIT 5""",
     },
+    "N4-04": {
+        "descripcion": "Instrumentos entre los de mayor volumen negociado en el último trimestre.",
+        "sql": """SELECT resumen.ticker, resumen.volumen_trimestre
+                  FROM (
+                      SELECT i.ticker, SUM(ch.volumen) AS volumen_trimestre
+                      FROM Cotizacion_Historica ch
+                      JOIN Instrumento_Financiero i ON i.id_instrumento = ch.id_instrumento
+                      WHERE ch.fecha >= CURRENT_DATE - INTERVAL 3 MONTH
+                      GROUP BY i.id_instrumento, i.ticker
+                  ) AS resumen
+                  WHERE resumen.volumen_trimestre > 0
+                  ORDER BY resumen.volumen_trimestre DESC
+                  LIMIT 10""",
+    },
+    "N5-01": {
+        "descripcion": "Ranking de clientes por monto invertido dentro de su perfil de riesgo.",
+        "sql": """SELECT cl.nombre_completo, cl.perfil_riesgo,
+                         ROUND(SUM(p.cantidad * p.precio_promedio_compra), 2) AS monto_invertido,
+                         RANK() OVER (
+                             PARTITION BY cl.perfil_riesgo
+                             ORDER BY SUM(p.cantidad * p.precio_promedio_compra) DESC
+                         ) AS ranking_en_su_perfil
+                  FROM Posicion p
+                  JOIN Cuenta_Inversion cu ON cu.id_cuenta = p.id_cuenta
+                  JOIN Cliente cl ON cl.id_cliente = cu.id_cliente
+                  GROUP BY cl.id_cliente, cl.nombre_completo, cl.perfil_riesgo
+                  ORDER BY cl.perfil_riesgo, ranking_en_su_perfil""",
+    },
+    "N5-02": {
+        "descripcion": "Variación porcentual día a día del precio de cierre de cada instrumento.",
+        "sql": """WITH precios_con_lag AS (
+                      SELECT
+                          ch.id_instrumento,
+                          ch.fecha,
+                          ch.precio_cierre,
+                          LAG(ch.precio_cierre) OVER (
+                              PARTITION BY ch.id_instrumento ORDER BY ch.fecha
+                          ) AS precio_cierre_dia_anterior
+                      FROM Cotizacion_Historica ch
+                  )
+                  SELECT
+                      i.ticker,
+                      p.fecha,
+                      p.precio_cierre,
+                      p.precio_cierre_dia_anterior,
+                      ROUND(
+                          100 * (p.precio_cierre - p.precio_cierre_dia_anterior)
+                          / p.precio_cierre_dia_anterior, 2
+                      ) AS variacion_porcentual
+                  FROM precios_con_lag p
+                  JOIN Instrumento_Financiero i ON i.id_instrumento = p.id_instrumento
+                  ORDER BY i.ticker, p.fecha""",
+    },
+    "N5-03": {
+        "descripcion": "Acumulado de comisiones pagadas por cada cuenta a lo largo del tiempo.",
+        "sql": """SELECT cu.id_cuenta, cl.nombre_completo, t.fecha_hora, t.comision,
+                         SUM(t.comision) OVER (
+                             PARTITION BY cu.id_cuenta ORDER BY t.fecha_hora
+                         ) AS comision_acumulada
+                  FROM Transaccion_Ejecutada t
+                  JOIN Orden o ON o.id_orden = t.id_orden
+                  JOIN Cuenta_Inversion cu ON cu.id_cuenta = o.id_cuenta
+                  JOIN Cliente cl ON cl.id_cliente = cu.id_cliente
+                  ORDER BY cu.id_cuenta, t.fecha_hora""",
+    },
 }
 
 def _ejecutar_consulta_bateria(codigo: str, cliente: dict):
@@ -1444,62 +1509,71 @@ def admin_listar_consultas_bateria(cliente=Depends(obtener_cliente_actual)):
         for codigo, datos in ADMIN_CONSULTAS_BATERIA.items()
     ]
 
-
 @app.get("/admin/consultas/{codigo}", tags=["Admin"])
 def admin_ejecutar_consulta_bateria(codigo: str, cliente=Depends(obtener_cliente_actual)):
     return _ejecutar_consulta_bateria(codigo, cliente)
 
-
+# Consultas N1
 @app.get("/admin/consultas/n1-01", tags=["Admin"])
 def admin_consulta_n1_01(cliente=Depends(obtener_cliente_actual)):
     return _ejecutar_consulta_bateria("N1-01", cliente)
-
 
 @app.get("/admin/consultas/n1-02", tags=["Admin"])
 def admin_consulta_n1_02(cliente=Depends(obtener_cliente_actual)):
     return _ejecutar_consulta_bateria("N1-02", cliente)
 
-
+# Consultas N2
 @app.get("/admin/consultas/n2-01", tags=["Admin"])
 def admin_consulta_n2_01(cliente=Depends(obtener_cliente_actual)):
     return _ejecutar_consulta_bateria("N2-01", cliente)
-
 
 @app.get("/admin/consultas/n2-02", tags=["Admin"])
 def admin_consulta_n2_02(cliente=Depends(obtener_cliente_actual)):
     return _ejecutar_consulta_bateria("N2-02", cliente)
 
-
 @app.get("/admin/consultas/n2-03", tags=["Admin"])
 def admin_consulta_n2_03(cliente=Depends(obtener_cliente_actual)):
     return _ejecutar_consulta_bateria("N2-03", cliente)
 
-
+# Consultas N3
 @app.get("/admin/consultas/n3-01", tags=["Admin"])
 def admin_consulta_n3_01(cliente=Depends(obtener_cliente_actual)):
     return _ejecutar_consulta_bateria("N3-01", cliente)
-
 
 @app.get("/admin/consultas/n3-02", tags=["Admin"])
 def admin_consulta_n3_02(cliente=Depends(obtener_cliente_actual)):
     return _ejecutar_consulta_bateria("N3-02", cliente)
 
-
 @app.get("/admin/consultas/n3-03", tags=["Admin"])
 def admin_consulta_n3_03(cliente=Depends(obtener_cliente_actual)):
     return _ejecutar_consulta_bateria("N3-03", cliente)
 
-
+# Consultas N4
 @app.get("/admin/consultas/n4-01", tags=["Admin"])
 def admin_consulta_n4_01(cliente=Depends(obtener_cliente_actual)):
     return _ejecutar_consulta_bateria("N4-01", cliente)
-
 
 @app.get("/admin/consultas/n4-02", tags=["Admin"])
 def admin_consulta_n4_02(cliente=Depends(obtener_cliente_actual)):
     return _ejecutar_consulta_bateria("N4-02", cliente)
 
-
 @app.get("/admin/consultas/n4-03", tags=["Admin"])
 def admin_consulta_n4_03(cliente=Depends(obtener_cliente_actual)):
     return _ejecutar_consulta_bateria("N4-03", cliente)
+
+@app.get("/admin/consultas/n4-04", tags=["Admin"])
+def admin_consulta_n4_04(cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria("N4-04", cliente)
+
+# Consultas N5
+@app.get("/admin/consultas/n5-01", tags=["Admin"])
+def admin_consulta_n5_01(cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria("N5-01", cliente)
+
+@app.get("/admin/consultas/n5-02", tags=["Admin"])
+def admin_consulta_n5_02(cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria("N5-02", cliente)
+
+@app.get("/admin/consultas/n5-03", tags=["Admin"])
+def admin_consulta_n5_03(cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria("N5-03", cliente)

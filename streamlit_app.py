@@ -1008,6 +1008,7 @@ elif page == "Admin":
                     st.success(resultado.get("mensaje"))
                 except Exception as exc:
                     st.error(f"Error: {exc}")
+                    
     with st.expander("Ejecutar consultas de la batería"):
         CONSULTAS_BATERIA = {
             "N1-01": "Órdenes ejecutadas total o parcialmente último mes",
@@ -1021,6 +1022,10 @@ elif page == "Admin":
             "N4-01": "Cuentas con saldo disponible mayor al promedio de su tipo",
             "N4-02": "Instrumentos sin ninguna orden registrada",
             "N4-03": "Top 5 clientes por patrimonio invertido",
+            "N4-04": "Instrumentos con mayor volumen en el último trimestre",
+            "N5-01": "Ranking de clientes por monto invertido en su perfil de riesgo",
+            "N5-02": "Variación porcentual diaria del precio de cierre por instrumento",
+            "N5-03": "Comisiones acumuladas por cuenta a lo largo del tiempo",
         }
 
         consulta_seleccionada = st.selectbox(
