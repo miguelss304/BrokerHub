@@ -14,7 +14,7 @@ Documentación interactiva Swagger UI:
 """
 
 from datetime import date, datetime
-from typing import Optional
+from typing import Optional, Dict
 from zoneinfo import ZoneInfo
 
 import mysql.connector
@@ -1299,3 +1299,207 @@ def cancelar_orden(id_orden: int, cliente=Depends(obtener_cliente_actual)):
         )
 
     return {"mensaje": f"Orden #{id_orden} cancelada correctamente"}
+
+ADMIN_CONSULTAS_BATERIA: Dict[str, dict] = {
+    "N1-01": {
+        "descripcion": "Órdenes ejecutadas total o parcialmente en el último mes con precio límite entre 20 y 500.",
+        "sql": """SELECT o.id_orden, o.tipo_orden, o.cantidad, o.precio_limite,
+                         o.estado, o.fecha_hora
+                  FROM Orden o
+                  WHERE o.estado IN ('EJECUTADA', 'PARCIALMENTE_EJECUTADA')
+                    AND o.precio_limite BETWEEN 20 AND 500
+                    AND o.fecha_hora >= CURRENT_DATE - INTERVAL 1 MONTH
+                  ORDER BY o.fecha_hora DESC""",
+    },
+    "N1-02": {
+        "descripcion": "Clientes con perfil AGRESIVO o MODERADO registrados entre 2023 y 2025 con correo corporativo o Gmail.",
+        "sql": """SELECT id_cliente, nombre_completo, tipo_cliente, perfil_riesgo,
+                         correo, fecha_registro
+                  FROM Cliente
+                  WHERE perfil_riesgo IN ('AGRESIVO', 'MODERADO')
+                    AND fecha_registro BETWEEN '2023-01-01' AND '2025-12-31'
+                    AND (correo LIKE '%@gmail.com' OR correo LIKE '%.com.co')
+                  ORDER BY fecha_registro""",
+    },
+    "N2-01": {
+        "descripcion": "Instrumentos financieros con su emisor y categoría de riesgo.",
+        "sql": """SELECT i.ticker, i.nombre AS instrumento, e.razon_social AS emisor,
+                         e.sector_economico, c.nombre AS categoria, c.nivel_riesgo
+                  FROM Instrumento_Financiero i
+                  INNER JOIN Emisor e ON e.id_emisor = i.id_emisor
+                  INNER JOIN Categoria_Instrumento c ON c.id_categoria = i.id_categoria
+                  ORDER BY c.nivel_riesgo, i.ticker""",
+    },
+    "N2-02": {
+        "descripcion": "Instrumentos nunca comprados por ningún cliente.",
+        "sql": """SELECT i.ticker, i.nombre, COUNT(p.id_cuenta) AS cuentas_que_lo_poseen
+                  FROM Instrumento_Financiero i
+                  LEFT JOIN Posicion p ON p.id_instrumento = i.id_instrumento
+                  GROUP BY i.id_instrumento, i.ticker, i.nombre
+                  HAVING cuentas_que_lo_poseen = 0""",
+    },
+    "N2-03": {
+        "descripcion": "Detalle completo de cada orden con cliente, cuenta, instrumento y mercado.",
+        "sql": """SELECT o.id_orden, cl.nombre_completo, cu.tipo_cuenta,
+                         i.ticker, m.nombre AS mercado, o.tipo_orden, o.cantidad,
+                         o.precio_limite, o.estado
+                  FROM Orden o
+                  INNER JOIN Cuenta_Inversion cu ON cu.id_cuenta = o.id_cuenta
+                  INNER JOIN Cliente cl ON cl.id_cliente = cu.id_cliente
+                  INNER JOIN Instrumento_Financiero i ON i.id_instrumento = o.id_instrumento
+                  INNER JOIN Listado_Mercado lm ON lm.id_instrumento = i.id_instrumento
+                  INNER JOIN Mercado_Bolsa m ON m.id_mercado = lm.id_mercado
+                  ORDER BY o.fecha_hora DESC""",
+    },
+    "N3-01": {
+        "descripcion": "Monto invertido por clientes en cada categoría de instrumento.",
+        "sql": """SELECT c.nombre AS categoria, c.nivel_riesgo,
+                         COUNT(p.id_cuenta) AS posiciones_abiertas,
+                         SUM(p.cantidad * p.precio_promedio_compra) AS monto_invertido
+                  FROM Posicion p
+                  JOIN Instrumento_Financiero i ON i.id_instrumento = p.id_instrumento
+                  JOIN Categoria_Instrumento c ON c.id_categoria = i.id_categoria
+                  GROUP BY c.id_categoria, c.nombre, c.nivel_riesgo
+                  HAVING COUNT(p.id_cuenta) > 1
+                  ORDER BY monto_invertido DESC""",
+    },
+    "N3-02": {
+        "descripcion": "Comisiones pagadas por cada cliente mes a mes.",
+        "sql": """SELECT cl.id_cliente, cl.nombre_completo,
+                         DATE_FORMAT(t.fecha_hora, '%Y-%m') AS mes,
+                         SUM(t.comision) AS comision_total
+                  FROM Transaccion_Ejecutada t
+                  JOIN Orden o ON o.id_orden = t.id_orden
+                  JOIN Cuenta_Inversion cu ON cu.id_cuenta = o.id_cuenta
+                  JOIN Cliente cl ON cl.id_cliente = cu.id_cliente
+                  GROUP BY cl.id_cliente, cl.nombre_completo, DATE_FORMAT(t.fecha_hora, '%Y-%m')
+                  HAVING SUM(t.comision) > 0
+                  ORDER BY mes, comision_total DESC""",
+    },
+    "N3-03": {
+        "descripcion": "Volumen histórico promedio y máximo negociado por instrumento en cada mercado.",
+        "sql": """SELECT i.ticker, m.nombre AS mercado,
+                         ROUND(AVG(ch.volumen), 0) AS volumen_promedio,
+                         MAX(ch.volumen) AS volumen_maximo,
+                         MIN(ch.precio_cierre) AS precio_min_historico,
+                         MAX(ch.precio_cierre) AS precio_max_historico
+                  FROM Cotizacion_Historica ch
+                  JOIN Instrumento_Financiero i ON i.id_instrumento = ch.id_instrumento
+                  JOIN Listado_Mercado lm ON lm.id_instrumento = i.id_instrumento
+                  JOIN Mercado_Bolsa m ON m.id_mercado = lm.id_mercado
+                  GROUP BY i.id_instrumento, i.ticker, m.id_mercado, m.nombre
+                  ORDER BY volumen_promedio DESC""",
+    },
+    "N4-01": {
+        "descripcion": "Cuentas con saldo disponible superior al promedio de su tipo.",
+        "sql": """SELECT cu.id_cuenta, cu.tipo_cuenta, cu.saldo_disponible, cl.nombre_completo
+                  FROM Cuenta_Inversion cu
+                  JOIN Cliente cl ON cl.id_cliente = cu.id_cliente
+                  WHERE cu.saldo_disponible > (
+                      SELECT AVG(cu2.saldo_disponible)
+                      FROM Cuenta_Inversion cu2
+                      WHERE cu2.tipo_cuenta = cu.tipo_cuenta
+                  )
+                  ORDER BY cu.tipo_cuenta, cu.saldo_disponible DESC""",
+    },
+    "N4-02": {
+        "descripcion": "Instrumentos que nunca han recibido ninguna orden.",
+        "sql": """SELECT i.ticker, i.nombre
+                  FROM Instrumento_Financiero i
+                  WHERE NOT EXISTS (
+                      SELECT 1
+                      FROM Orden o
+                      WHERE o.id_instrumento = i.id_instrumento
+                  )""",
+    },
+    "N4-03": {
+        "descripcion": "Top 5 clientes con mayor patrimonio invertido.",
+        "sql": """SELECT cl.id_cliente, cl.nombre_completo,
+                         SUM(p.cantidad * p.precio_promedio_compra) AS patrimonio_invertido
+                  FROM Cliente cl
+                  JOIN Cuenta_Inversion cu ON cu.id_cliente = cl.id_cliente
+                  JOIN Posicion p ON p.id_cuenta = cu.id_cuenta
+                  GROUP BY cl.id_cliente, cl.nombre_completo
+                  ORDER BY patrimonio_invertido DESC
+                  LIMIT 5""",
+    },
+}
+
+def _ejecutar_consulta_bateria(codigo: str, cliente: dict):
+    _validar_admin(cliente)
+    consulta = ADMIN_CONSULTAS_BATERIA.get(codigo.upper())
+    if not consulta:
+        raise HTTPException(status_code=404, detail="Consulta no encontrada")
+    return {
+        "codigo": codigo.upper(),
+        "descripcion": consulta["descripcion"],
+        "resultados": consultar(consulta["sql"]),
+    }
+
+@app.get("/admin/consultas", tags=["Admin"])
+def admin_listar_consultas_bateria(cliente=Depends(obtener_cliente_actual)):
+    _validar_admin(cliente)
+    return [
+        {"codigo": codigo, "descripcion": datos["descripcion"]}
+        for codigo, datos in ADMIN_CONSULTAS_BATERIA.items()
+    ]
+
+
+@app.get("/admin/consultas/{codigo}", tags=["Admin"])
+def admin_ejecutar_consulta_bateria(codigo: str, cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria(codigo, cliente)
+
+
+@app.get("/admin/consultas/n1-01", tags=["Admin"])
+def admin_consulta_n1_01(cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria("N1-01", cliente)
+
+
+@app.get("/admin/consultas/n1-02", tags=["Admin"])
+def admin_consulta_n1_02(cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria("N1-02", cliente)
+
+
+@app.get("/admin/consultas/n2-01", tags=["Admin"])
+def admin_consulta_n2_01(cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria("N2-01", cliente)
+
+
+@app.get("/admin/consultas/n2-02", tags=["Admin"])
+def admin_consulta_n2_02(cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria("N2-02", cliente)
+
+
+@app.get("/admin/consultas/n2-03", tags=["Admin"])
+def admin_consulta_n2_03(cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria("N2-03", cliente)
+
+
+@app.get("/admin/consultas/n3-01", tags=["Admin"])
+def admin_consulta_n3_01(cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria("N3-01", cliente)
+
+
+@app.get("/admin/consultas/n3-02", tags=["Admin"])
+def admin_consulta_n3_02(cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria("N3-02", cliente)
+
+
+@app.get("/admin/consultas/n3-03", tags=["Admin"])
+def admin_consulta_n3_03(cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria("N3-03", cliente)
+
+
+@app.get("/admin/consultas/n4-01", tags=["Admin"])
+def admin_consulta_n4_01(cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria("N4-01", cliente)
+
+
+@app.get("/admin/consultas/n4-02", tags=["Admin"])
+def admin_consulta_n4_02(cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria("N4-02", cliente)
+
+
+@app.get("/admin/consultas/n4-03", tags=["Admin"])
+def admin_consulta_n4_03(cliente=Depends(obtener_cliente_actual)):
+    return _ejecutar_consulta_bateria("N4-03", cliente)

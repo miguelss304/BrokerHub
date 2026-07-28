@@ -12,6 +12,9 @@ Pensado para dejarlo corriendo durante la demo. Maneja:
   para no abrir/cerrar la conexión a MySQL constantemente.
 """
 
+import subprocess
+import sys
+import time
 import os
 import json
 import time
@@ -172,6 +175,12 @@ def iniciar_streaming():
 
 
 def main():
+    print(f"\nCorriendo actualizar_historico.py ...")
+    resultado = subprocess.run([sys.executable, "actualizar_historico.py"], capture_output=False)
+    if resultado.returncode != 0:
+        print(f"    ERROR: {"actualizar_historico.py"} terminó con código {resultado.returncode}. Deteniendo el proceso.")
+        sys.exit(1)
+    print(f"    {"actualizar_historico.py"} terminado correctamente.")
     cargar_tickers()
     if not id_instrumento_por_ticker:
         print("No hay tickers en Instrumento_Financiero. Corre primero carga_inicial.py")

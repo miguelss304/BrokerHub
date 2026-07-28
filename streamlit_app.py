@@ -1008,3 +1008,44 @@ elif page == "Admin":
                     st.success(resultado.get("mensaje"))
                 except Exception as exc:
                     st.error(f"Error: {exc}")
+    with st.expander("Ejecutar consultas de la batería"):
+        CONSULTAS_BATERIA = {
+            "N1-01": "Órdenes ejecutadas total o parcialmente último mes",
+            "N1-02": "Clientes agresivo/moderado con correo corporativo o Gmail",
+            "N2-01": "Instrumentos con emisor y categoría de riesgo",
+            "N2-02": "Instrumentos nunca comprados por ningún cliente",
+            "N2-03": "Detalle completo de cada orden con cliente, cuenta e instrumento",
+            "N3-01": "Monto invertido por categoría de instrumento",
+            "N3-02": "Comisiones pagadas por cliente mes a mes",
+            "N3-03": "Volumen promedio y máximo por instrumento y mercado",
+            "N4-01": "Cuentas con saldo disponible mayor al promedio de su tipo",
+            "N4-02": "Instrumentos sin ninguna orden registrada",
+            "N4-03": "Top 5 clientes por patrimonio invertido",
+        }
+
+        consulta_seleccionada = st.selectbox(
+            "Selecciona una consulta",
+            list(CONSULTAS_BATERIA.keys()),
+            format_func=lambda clave: f"{clave} — {CONSULTAS_BATERIA[clave]}",
+            key="admin_consulta_bateria_select",
+        )
+
+        ejecutar_consulta = st.button("Ejecutar consulta", type="primary", key="admin_ejecutar_consulta_bateria")
+        if ejecutar_consulta:
+            try:
+                resultado = api_request(
+                    f"/admin/consultas/{consulta_seleccionada.lower()}",
+                    method="get",
+                    token=token,
+                )
+                if isinstance(resultado, dict) and "resultados" in resultado:
+                    filas = resultado["resultados"]
+                    if filas:
+                        df_resultados = pd.DataFrame(filas)
+                        st.dataframe(df_resultados, use_container_width=True)
+                    else:
+                        st.info("La consulta se ejecutó correctamente, pero no devolvió filas.")
+                else:
+                    st.json(resultado)
+            except Exception as exc:
+                st.error(f"Error al ejecutar la consulta: {exc}")

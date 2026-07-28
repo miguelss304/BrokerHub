@@ -4,8 +4,7 @@ Este script usa la configuración de conexión de `conexion_db.py` y el hash bcr
 definido en `auth.py` para insertar un cliente y su credencial con rol ADMIN.
 
 Uso:
-    py crear_admin.py --nombre "Admin Prueba" --usuario admin_prueba \
-        --contrasena Admin123! --correo admin@prueba.local --documento 00000000A
+    py crear_admin.py --nombre "Admin Prueba" --usuario admin_prueba --contrasena Admin123! --correo admin@prueba.local --documento 00000000A
 
 También acepta varios parámetros opcionales para controlar el tipo de cliente y
 perfil de riesgo.

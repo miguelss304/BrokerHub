@@ -189,7 +189,7 @@ def procesar_ticker(conexion, ticker, ids_mercado, id_raiz):
         return conexion, True
 
     try:
-        historico = obtener_historico(ticker, periodo="6mo")
+        historico = obtener_historico(ticker, periodo="max")
     except Exception as e:
         print(f"  [ERROR] No se pudo traer histórico de {ticker} (yfinance): {e}")
         return conexion, True  # no es error de conexión a MySQL, no reintentar
