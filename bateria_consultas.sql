@@ -181,6 +181,128 @@ ORDER BY patrimonio_invertido DESC
 LIMIT 5;
 
 
+-- ==============================================
+-- N4-04: Qué instrumentos estuvieron entre los de mayor volumen
+-- negociado en el último trimestre? (subconsulta en la cláusula FROM)
+-- ==============================================
+ANALYZE TABLE Cotizacion_Historica UPDATE HISTOGRAM ON fecha WITH 100 BUCKETS;
+EXPLAIN ANALYZE
+SELECT resumen.ticker, resumen.volumen_trimestre
+FROM (
+    SELECT i.ticker, SUM(ch.volumen) AS volumen_trimestre
+    FROM Cotizacion_Historica ch
+    JOIN Instrumento_Financiero i ON i.id_instrumento = ch.id_instrumento
+    WHERE ch.fecha >= CURRENT_DATE - INTERVAL 3 MONTH
+    GROUP BY i.id_instrumento, i.ticker
+) AS resumen
+WHERE resumen.volumen_trimestre > 0
+ORDER BY resumen.volumen_trimestre DESC
+LIMIT 10;
+
+
+-- ================================================================
+-- NIVEL 5 FUNCIONES DE VENTANA
+-- ================================================================
+
+-- ==============================================
+-- N5-01: Cómo se ranquean los clientes por monto total invertido
+-- (posiciones abiertas), dentro de su propio perfil de riesgo?
+-- ==============================================
+SELECT cl.nombre_completo, cl.perfil_riesgo,
+       ROUND(SUM(p.cantidad * p.precio_promedio_compra), 2) AS monto_invertido,
+       RANK() OVER (
+           PARTITION BY cl.perfil_riesgo
+           ORDER BY SUM(p.cantidad * p.precio_promedio_compra) DESC
+       ) AS ranking_en_su_perfil
+FROM Posicion p
+JOIN Cuenta_Inversion cu ON cu.id_cuenta = p.id_cuenta
+JOIN Cliente cl ON cl.id_cliente = cu.id_cliente
+GROUP BY cl.id_cliente, cl.nombre_completo, cl.perfil_riesgo
+ORDER BY cl.perfil_riesgo, ranking_en_su_perfil;
+
+-- ==============================================
+-- N5-02: Día a día, cuánto varió porcentualmente el precio de
+-- cierre de cada instrumento frente al día anterior? (LAG)
+-- ==============================================
+CREATE INDEX idx_cotizacion_instrumento_fecha
+ON Cotizacion_Historica (id_instrumento, fecha);
+-- (si ya la creaste para la consulta 1, esta línea es la misma, no la dupliques)
+
+-- Reescritura de la consulta N5-02
+WITH precios_con_lag AS (
+    SELECT
+        ch.id_instrumento,
+        ch.fecha,
+        ch.precio_cierre,
+        LAG(ch.precio_cierre) OVER (
+            PARTITION BY ch.id_instrumento ORDER BY ch.fecha
+        ) AS precio_cierre_dia_anterior
+    FROM Cotizacion_Historica ch
+)
+SELECT
+    i.ticker,
+    p.fecha,
+    p.precio_cierre,
+    p.precio_cierre_dia_anterior,
+    ROUND(
+        100 * (p.precio_cierre - p.precio_cierre_dia_anterior)
+        / p.precio_cierre_dia_anterior, 2
+    ) AS variacion_porcentual
+FROM precios_con_lag p
+JOIN Instrumento_Financiero i ON i.id_instrumento = p.id_instrumento
+ORDER BY i.ticker, p.fecha;
+-- ==============================================
+-- N5-03: Para cada cuenta, cuál es el acumulado de comisiones
+-- pagadas a lo largo del tiempo? (suma acumulada con SUM() OVER)
+-- ==============================================
+SELECT cu.id_cuenta, cl.nombre_completo, t.fecha_hora, t.comision,
+       SUM(t.comision) OVER (
+           PARTITION BY cu.id_cuenta ORDER BY t.fecha_hora
+       ) AS comision_acumulada
+FROM Transaccion_Ejecutada t
+JOIN Orden o ON o.id_orden = t.id_orden
+JOIN Cuenta_Inversion cu ON cu.id_cuenta = o.id_cuenta
+JOIN Cliente cl ON cl.id_cliente = cu.id_cliente
+ORDER BY cu.id_cuenta, t.fecha_hora;
+
+
+-- ================================================================
+-- NIVEL 6 VISTAS
+-- ================================================================
+
+-- ==============================================
+-- N6-01: Vista que encapsula el portafolio consolidado de cada
+-- cliente (posiciones + valor en libros)
+-- ==============================================
+CREATE OR REPLACE VIEW vw_portafolio_cliente AS
+SELECT cl.id_cliente, cl.nombre_completo, cu.id_cuenta, cu.tipo_cuenta,
+       i.ticker, i.nombre AS instrumento, p.cantidad,
+       p.precio_promedio_compra,
+       ROUND(p.cantidad * p.precio_promedio_compra, 2) AS valor_en_libros,
+       p.fecha_primera_compra
+FROM Posicion p
+JOIN Cuenta_Inversion cu ON cu.id_cuenta = p.id_cuenta
+JOIN Cliente cl ON cl.id_cliente = cu.id_cliente
+JOIN Instrumento_Financiero i ON i.id_instrumento = p.id_instrumento;
+
+-- Ejemplo de uso de la vista:
+-- SELECT * FROM vw_portafolio_cliente WHERE id_cliente = 1;
+
+-- ==============================================
+-- N6-02: Vista que resume, por instrumento, cuántas órdenes hay en
+-- cada estado para simplificar el monitoreo operativo
+-- ==============================================
+CREATE OR REPLACE VIEW vw_resumen_ordenes_por_instrumento AS
+SELECT i.ticker, i.nombre AS instrumento, o.estado,
+       COUNT(*) AS cantidad_ordenes,
+       SUM(o.cantidad) AS unidades_totales,
+       ROUND(AVG(o.precio_limite), 4) AS precio_limite_promedio
+FROM Orden o
+JOIN Instrumento_Financiero i ON i.id_instrumento = o.id_instrumento
+GROUP BY i.id_instrumento, i.ticker, i.nombre, o.estado;
+
+-- Ejemplo de uso de la vista:
+-- SELECT * FROM vw_resumen_ordenes_por_instrumento WHERE estado = 'PENDIENTE';
 -- ================================================================
 -- OPTIMIZACIÓN: ÍNDICES RECOMENDADOS PARA ESTA BATERÍA
 -- Ejecuta esto si notas lentitud en la carga de datos masiva
