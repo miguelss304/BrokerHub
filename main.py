@@ -153,34 +153,28 @@ def registrar_notificacion(id_cliente: int, tipo: str, titulo: str, mensaje: str
     """Registra una notificación para un cliente.
 
     Este helper es usado internamente por las rutas de la API y por la lógica
-    administrativa. No hay dependencia directa con el módulo auxiliar
-    `notificaciones.py`, aunque su funcionalidad es equivalente.
+    administrativa. Delega el INSERT en el procedimiento almacenado
+    `sp_crear_notificacion_admin` (trigger_procs_func.sql) en vez de
+    duplicar la sentencia SQL aquí.
 
-    Si se pasa un cursor o conexión existente, no los cierra localmente.
+    Si se pasa un cursor/conexión ya abiertos, se reutilizan con CALL en
+    lugar de abrir una conexión nueva (ejecutar_procedimiento siempre abre
+    la suya propia).
     """
-    propio_cursor = False
-    propio_conexion = False
-
-    if cursor is None:
-        if conexion is None:
-            conexion = obtener_conexion()
-            propio_conexion = True
-        cursor = conexion.cursor()
-        propio_cursor = True
-
-    cursor.execute(
-        """INSERT INTO Notificacion (id_cliente, tipo, titulo, mensaje)
-           VALUES (%s, %s, %s, %s)""",
-        (id_cliente, tipo, titulo, mensaje),
-    )
-
-    if commit and conexion is not None:
-        conexion.commit()
-
-    if propio_cursor:
-        cursor.close()
-    if propio_conexion and conexion is not None:
-        conexion.close()
+    if cursor is not None or conexion is not None:
+        propio_cursor = cursor is None
+        if cursor is None:
+            cursor = conexion.cursor()
+        cursor.execute(
+            "CALL sp_crear_notificacion_admin(%s, %s, %s, %s)",
+            (id_cliente, tipo, titulo, mensaje),
+        )
+        if commit and conexion is not None:
+            conexion.commit()
+        if propio_cursor:
+            cursor.close()
+    else:
+        ejecutar_procedimiento("sp_crear_notificacion_admin", (id_cliente, tipo, titulo, mensaje))
 
 
 def mercado_esta_abierto() -> bool:
@@ -344,55 +338,30 @@ def health():
 def registrar_cliente(datos: NuevoCliente):
     """Registra un nuevo cliente, genera sus credenciales y crea su cuenta de 
     inversión inicial."""
-    if datos.tipo_cliente not in ("N", "J"):
-        raise HTTPException(status_code=400, detail="tipo_cliente debe ser 'N' o 'J'")
-    if datos.perfil_riesgo not in ("CONSERVADOR", "MODERADO", "AGRESIVO"):
-        raise HTTPException(status_code=400, detail="perfil_riesgo inválido")
-
-    existente = consultar(
-        "SELECT id_cliente FROM Credencial WHERE usuario = %s", (datos.usuario,)
-    )
-    if existente:
-        raise HTTPException(status_code=409, detail="Ese nombre de usuario ya está en uso")
-
     try:
+        # tipo_cliente, perfil_riesgo y usuario duplicado ahora se validan
+        # dentro de sp_registrar_cliente. Toda la secuencia Cliente + Credencial + Cuenta_Inversion vive
+        # ahora en el procedimiento sp_registrar_cliente (trigger_procs_func.sql),
+        # que además valida usuario duplicado, tipo_cliente y perfil_riesgo
+        # dentro de una única transacción.
         conexion = obtener_conexion()
         cursor = conexion.cursor()
-
-        # Insertar registro principal del Cliente
-        cursor.execute(
-            """INSERT INTO Cliente (nombre_completo, tipo_cliente, documento_identidad,
-                                     correo, perfil_riesgo, fecha_registro)
-               VALUES (%s, %s, %s, %s, %s, %s)""",
-            (datos.nombre_completo, datos.tipo_cliente, datos.documento_identidad,
-             datos.correo, datos.perfil_riesgo, datetime.now().date()),
+        args = (
+            datos.nombre_completo, datos.tipo_cliente, datos.documento_identidad,
+            str(datos.correo), datos.perfil_riesgo, datos.usuario,
+            hash_contrasena(datos.contrasena), "CLIENTE", 1,
+            0, 0,  # placeholders para los OUT: p_id_cliente, p_id_cuenta
         )
-        id_cliente = cursor.lastrowid
-        if id_cliente is None:
-            raise HTTPException(status_code=500, detail="No se pudo determinar el id_cliente generado")
-
-        # Guardar Credenciales asociadas (Hash de contraseña con Bcrypt)
-        cursor.execute(
-            """INSERT INTO Credencial (id_cliente, usuario, contrasena_hash, fecha_creacion)
-               VALUES (%s, %s, %s, %s)""",
-            (id_cliente, datos.usuario, hash_contrasena(datos.contrasena), datetime.now()),
-        )
-
-        # Apertura de cuenta de inversión por defecto
-        cursor.execute(
-            """INSERT INTO Cuenta_Inversion (id_cliente, tipo_cuenta, saldo_disponible,
-                                              fecha_apertura, estado)
-               VALUES (%s, 'ORDINARIA', 0, %s, 'A')""",
-            (id_cliente, datetime.now().date()),
-        )
-        id_cuenta = cursor.lastrowid
-
-        conexion.commit()
+        resultado_sp = cursor.callproc("sp_registrar_cliente", args)
+        id_cliente = resultado_sp[9]
+        id_cuenta = resultado_sp[10]
         cursor.close()
         conexion.close()
     except mysql.connector.IntegrityError as e:
         raise HTTPException(status_code=409, detail=f"Datos duplicados: {e}")
-    except mysql.connector.Error as e:
+    except mysql.connector.errors.DatabaseError as e:
+        if e.errno == 1644:  # SIGNAL SQLSTATE '45000' lanzado dentro del SP
+            raise HTTPException(status_code=409, detail=str(e.msg))
         raise HTTPException(status_code=503, detail=f"Base de datos no disponible: {e}")
 
     token = crear_token(id_cliente, datos.usuario)
@@ -678,42 +647,27 @@ def registrar_admin(datos: NuevoCliente, cliente=Depends(obtener_cliente_actual)
     """Crea un nuevo usuario administrador. Solo accesible para admins existentes."""
     _validar_admin(cliente)
 
-    if datos.tipo_cliente not in ("N", "J"):
-        raise HTTPException(status_code=400, detail="tipo_cliente debe ser 'N' o 'J'")
-    if datos.perfil_riesgo not in ("CONSERVADOR", "MODERADO", "AGRESIVO"):
-        raise HTTPException(status_code=400, detail="perfil_riesgo inválido")
-
-    existente = consultar(
-        "SELECT id_cliente FROM Credencial WHERE usuario = %s", (datos.usuario,)
-    )
-    if existente:
-        raise HTTPException(status_code=409, detail="Ese nombre de usuario ya está en uso")
-
     try:
+        # tipo_cliente, perfil_riesgo y usuario duplicado se validan dentro
+        # de sp_registrar_cliente. p_crear_cuenta=0 porque un admin no
+        # necesita una Cuenta_Inversion inicial.
         conexion = obtener_conexion()
         cursor = conexion.cursor()
-
-        cursor.execute(
-            """INSERT INTO Cliente (nombre_completo, tipo_cliente, documento_identidad,
-                                         correo, perfil_riesgo, fecha_registro)
-               VALUES (%s, %s, %s, %s, %s, %s)""",
-            (datos.nombre_completo, datos.tipo_cliente, datos.documento_identidad,
-             datos.correo, datos.perfil_riesgo, datetime.now().date()),
+        args = (
+            datos.nombre_completo, datos.tipo_cliente, datos.documento_identidad,
+            str(datos.correo), datos.perfil_riesgo, datos.usuario,
+            hash_contrasena(datos.contrasena), "ADMIN", 0,
+            0, 0,  # placeholders para los OUT: p_id_cliente, p_id_cuenta
         )
-        id_cliente_nuevo = cursor.lastrowid
-
-        cursor.execute(
-            """INSERT INTO Credencial (id_cliente, usuario, contrasena_hash, rol, fecha_creacion)
-               VALUES (%s, %s, %s, 'ADMIN', %s)""",
-            (id_cliente_nuevo, datos.usuario, hash_contrasena(datos.contrasena), datetime.now()),
-        )
-
-        conexion.commit()
+        resultado_sp = cursor.callproc("sp_registrar_cliente", args)
+        id_cliente_nuevo = resultado_sp[9]
         cursor.close()
         conexion.close()
     except mysql.connector.IntegrityError as e:
         raise HTTPException(status_code=409, detail=f"Datos duplicados: {e}")
-    except mysql.connector.Error as e:
+    except mysql.connector.errors.DatabaseError as e:
+        if e.errno == 1644:
+            raise HTTPException(status_code=409, detail=str(e.msg))
         raise HTTPException(status_code=503, detail=f"Base de datos no disponible: {e}")
 
     return {
@@ -1284,14 +1238,9 @@ def cancelar_orden(id_orden: int, cliente=Depends(obtener_cliente_actual)):
         )
 
     try:
-        conexion = obtener_conexion()
-        cursor = conexion.cursor()
-        cursor.execute(
-            "UPDATE Orden SET estado = 'CANCELADA' WHERE id_orden = %s", (id_orden,)
-        )
-        conexion.commit()
-        cursor.close()
-        conexion.close()
+        # Se reutiliza el mismo procedimiento almacenado que usa el módulo
+        # admin (sp_cancelar_orden), en vez de duplicar el UPDATE aquí.
+        ejecutar_procedimiento("sp_cancelar_orden", (id_orden,))
     except mysql.connector.Error as e:
         raise HTTPException(
             status_code=503,

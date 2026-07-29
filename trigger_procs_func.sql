@@ -559,3 +559,87 @@ DELIMITER ;
 -- CALL sp_cambiar_estado_cuenta(3, 'I');
 -- CALL sp_ajustar_saldo_cuenta(3, 15000.00);
 -- CALL sp_crear_notificacion_admin(2, 'ADMIN', 'Ajuste de cuenta', 'El saldo de su cuenta ha sido ajustado por administración.');
+
+-- ============================================================
+-- PROCEDIMIENTO 7
+-- Unifica el registro de un cliente nuevo: inserta en Cliente,
+-- en Credencial (con el hash ya calculado en Python con bcrypt)
+-- y, opcionalmente, abre una Cuenta_Inversion ORDINARIA inicial.
+-- Reemplaza la lógica que main.py duplicaba en /auth/registro y
+-- /admin/registro (misma secuencia de 2-3 INSERTs en cada uno).
+--
+-- p_rol: 'CLIENTE' o 'ADMIN'.
+-- p_crear_cuenta: 1 para abrir cuenta inicial (registro normal),
+--                 0 para omitirla (registro de administrador).
+-- La contraseña NUNCA se hashea en SQL: p_contrasena_hash ya
+-- llega calculado desde Python (bcrypt), igual que antes.
+-- ============================================================
+DELIMITER $$
+
+CREATE PROCEDURE sp_registrar_cliente(
+    IN p_nombre_completo VARCHAR(150),
+    IN p_tipo_cliente CHAR(1),
+    IN p_documento_identidad VARCHAR(20),
+    IN p_correo VARCHAR(150),
+    IN p_perfil_riesgo VARCHAR(15),
+    IN p_usuario VARCHAR(50),
+    IN p_contrasena_hash VARCHAR(255),
+    IN p_rol VARCHAR(10),
+    IN p_crear_cuenta TINYINT(1),
+    OUT p_id_cliente INT,
+    OUT p_id_cuenta INT
+)
+BEGIN
+    DECLARE v_existe_usuario INT DEFAULT 0;
+
+    DECLARE EXIT HANDLER FOR SQLEXCEPTION
+    BEGIN
+        ROLLBACK;
+        RESIGNAL;
+    END;
+
+    SELECT COUNT(*) INTO v_existe_usuario
+    FROM Credencial
+    WHERE usuario = p_usuario;
+
+    IF v_existe_usuario > 0 THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Ese nombre de usuario ya está en uso.';
+    END IF;
+
+    IF p_tipo_cliente NOT IN ('N', 'J') THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = "tipo_cliente debe ser 'N' o 'J'.";
+    END IF;
+
+    IF p_perfil_riesgo NOT IN ('CONSERVADOR', 'MODERADO', 'AGRESIVO') THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'perfil_riesgo inválido.';
+    END IF;
+
+    START TRANSACTION;
+
+    INSERT INTO Cliente (nombre_completo, tipo_cliente, documento_identidad, correo, perfil_riesgo, fecha_registro)
+    VALUES (p_nombre_completo, p_tipo_cliente, p_documento_identidad, p_correo, p_perfil_riesgo, CURDATE());
+
+    SET p_id_cliente = LAST_INSERT_ID();
+
+    INSERT INTO Credencial (id_cliente, usuario, contrasena_hash, rol, fecha_creacion)
+    VALUES (p_id_cliente, p_usuario, p_contrasena_hash, p_rol, NOW());
+
+    IF p_crear_cuenta = 1 THEN
+        INSERT INTO Cuenta_Inversion (id_cliente, tipo_cuenta, saldo_disponible, fecha_apertura, estado)
+        VALUES (p_id_cliente, 'ORDINARIA', 0, CURDATE(), 'A');
+        SET p_id_cuenta = LAST_INSERT_ID();
+    ELSE
+        SET p_id_cuenta = NULL;
+    END IF;
+
+    COMMIT;
+END$$
+
+DELIMITER ;
+
+-- Uso (registro normal de cliente, con cuenta inicial):
+-- CALL sp_registrar_cliente('Ana Ruiz','N','1023456789','ana@correo.com','MODERADO','ana123','<hash_bcrypt>','CLIENTE',1,@id_cliente,@id_cuenta);
+-- SELECT @id_cliente, @id_cuenta;
+--
+-- Uso (registro de administrador, sin cuenta):
+-- CALL sp_registrar_cliente('Admin Uno','N','1000000001','admin@correo.com','CONSERVADOR','admin1','<hash_bcrypt>','ADMIN',0,@id_cliente,@id_cuenta);
