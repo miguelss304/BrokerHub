@@ -499,7 +499,8 @@ def obtener_portafolio(id_cliente: int, cliente=Depends(obtener_cliente_actual))
     _validar_cliente_autorizado(id_cliente, cliente["id_cliente"])
     posiciones = consultar(
         """SELECT p.id_cuenta, p.id_instrumento, i.ticker, i.nombre, p.cantidad,
-                  p.precio_promedio_compra, p.fecha_primera_compra
+                  p.precio_promedio_compra, p.fecha_primera_compra,
+                  fn_variacion_diaria_instrumento(p.id_instrumento) AS variacion_diaria
            FROM Posicion p
            JOIN Cuenta_Inversion c ON c.id_cuenta = p.id_cuenta
            JOIN Instrumento_Financiero i ON i.id_instrumento = p.id_instrumento

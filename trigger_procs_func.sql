@@ -643,3 +643,55 @@ DELIMITER ;
 --
 -- Uso (registro de administrador, sin cuenta):
 -- CALL sp_registrar_cliente('Admin Uno','N','1000000001','admin@correo.com','CONSERVADOR','admin1','<hash_bcrypt>','ADMIN',0,@id_cliente,@id_cuenta);
+
+-- ============================================================
+-- FUNCION 4
+-- Calcula la variacion porcentual diaria de un instrumento:
+-- compara el precio de cierre historico mas reciente contra el
+-- de la sesion anterior (Cotizacion_Historica). Si aun no hay
+-- dos cierres registrados, devuelve NULL (no se puede calcular).
+--
+-- Nota: usa Cotizacion_Historica (cierres por dia), no
+-- Precio_Tiempo_Real, porque "variacion diaria" es una
+-- comparacion entre dias, no dentro del mismo dia.
+-- ============================================================
+DELIMITER $$
+
+CREATE FUNCTION fn_variacion_diaria_instrumento(p_id_instrumento INT)
+RETURNS NUMERIC(8,2)
+DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE v_precio_hoy NUMERIC(15,4) DEFAULT NULL;
+    DECLARE v_precio_ayer NUMERIC(15,4) DEFAULT NULL;
+    DECLARE v_fecha_hoy DATE DEFAULT NULL;
+
+    SELECT precio_cierre, fecha
+    INTO v_precio_hoy, v_fecha_hoy
+    FROM Cotizacion_Historica
+    WHERE id_instrumento = p_id_instrumento
+    ORDER BY fecha DESC
+    LIMIT 1;
+
+    IF v_precio_hoy IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    SELECT precio_cierre
+    INTO v_precio_ayer
+    FROM Cotizacion_Historica
+    WHERE id_instrumento = p_id_instrumento
+      AND fecha < v_fecha_hoy
+    ORDER BY fecha DESC
+    LIMIT 1;
+
+    IF v_precio_ayer IS NULL OR v_precio_ayer = 0 THEN
+        RETURN NULL;
+    END IF;
+
+    RETURN ROUND(100 * (v_precio_hoy - v_precio_ayer) / v_precio_ayer, 2);
+END$$
+
+DELIMITER ;
+
+-- Uso: SELECT fn_variacion_diaria_instrumento(1);

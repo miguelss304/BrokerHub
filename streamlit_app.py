@@ -776,11 +776,38 @@ elif page == "Portafolio":
         portafolio = api_request(f"/clientes/{cliente_id}/portafolio", token=token)
         if portafolio:
             df = pd.DataFrame(portafolio)
-            st.dataframe(df, use_container_width=True)
+
+            df["total_invertido"] = df["cantidad"] * df["precio_promedio_compra"]
+
+            df_mostrar = df[[
+                "ticker",
+                "cantidad",
+                "precio_actual",
+                "variacion_diaria",
+                "total_invertido",
+                "ganancia_perdida",
+            ]].rename(columns={
+                "ticker": "Símbolo",
+                "cantidad": "N° Acciones",
+                "precio_actual": "Precio de Mercado",
+                "variacion_diaria": "Variación Diaria (%)",
+                "total_invertido": "Total Invertido",
+                "ganancia_perdida": "Ganancia/Pérdida",
+            })
+
+            st.dataframe(df_mostrar, use_container_width=True)
         else:
             st.info("No hay posiciones en el portafolio")
     except Exception as exc:
         st.error(str(exc))
+        
+    col1, col2, col3 = st.columns(3)
+    
+    try:
+        valor = api_request(f"/cuentas/{account_id}/valor-portafolio", token=token)
+        col1.metric("Valor de portafolio", f"${valor.get('valor_portafolio', 0):.2f}")
+    except Exception as exc:
+        col1.error("Error al cargar portafolio")
 
 elif page == "Movimientos":
     if not account_id:
