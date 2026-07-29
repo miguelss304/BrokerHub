@@ -26,7 +26,24 @@ NUM_CLIENTES = 30
 PERFILES_RIESGO = ["CONSERVADOR", "MODERADO", "AGRESIVO"]
 TIPOS_CUENTA = ["ORDINARIA", "RETIRO", "FIDUCIARIA"]
 
+def generar_correo():
+    """La mayoría de correos son genéricos (fake.email()), pero una parte
+    usa dominios específicos como gmail.com o .com.co, para variar."""
+    opcion = random.choices(
+        ["generico", "gmail", "com_co"],
+        weights=[60, 25, 15],
+    )[0]
 
+    usuario = fake.unique.user_name()
+
+    if opcion == "gmail":
+        return f"{usuario}@gmail.com"
+    elif opcion == "com_co":
+        dominio = fake.word()
+        return f"{usuario}@{dominio}.com.co"
+    else:
+        return fake.unique.email()
+    
 def generar_cliente():
     tipo_cliente = random.choices(["N", "J"], weights=[85, 15])[0]  # 85% naturales, 15% jurídicos
     nombre = fake.company() if tipo_cliente == "J" else fake.name()
@@ -35,7 +52,7 @@ def generar_cliente():
         "tipo_cliente": tipo_cliente,
         "documento_identidad": fake.unique.numerify("1########"),
         "perfil_riesgo": random.choice(PERFILES_RIESGO),
-        "correo": fake.unique.email(),
+        "correo": generar_correo(),
         "fecha_registro": fake.date_between(start_date="-2y", end_date="today"),
     }
 
