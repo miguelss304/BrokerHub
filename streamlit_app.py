@@ -479,7 +479,7 @@ if not token:
             nombre = st.text_input("Nombre completo")
             documento = st.text_input("Documento de identidad")
             correo = st.text_input("Correo")
-            usuario_reg = st.text_input("Nuevo usuario")
+            usuario_reg = st.text_input("Usuario nuevo")
             perfil = st.selectbox("Perfil de riesgo", ["CONSERVADOR", "MODERADO", "AGRESIVO"])
             password_reg = st.text_input("Contraseña", type="password")
             submitted_reg = st.form_submit_button("Registrar", use_container_width=True)
